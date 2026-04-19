@@ -211,9 +211,9 @@ services:
       GENERATION_MAX_TOKENS: 256
       GENERATION_TEMPERATURE: 0.2
       USE_GPU: "true"
-      # GPU-1 ONLY — do NOT touch GPU-0 (shared server constraint)
+      # GPU-1 ONLY — NVIDIA runtime maps physical GPU-1 → device 0 inside container
+      # Do NOT set CUDA_VISIBLE_DEVICES here — it would offset the remapped index and block CUDA
       NVIDIA_VISIBLE_DEVICES: "1"
-      CUDA_VISIBLE_DEVICES: "1"
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       WANDB_PROJECT: v2ai-rag
     ports:

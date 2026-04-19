@@ -8,9 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    # Lock to GPU-1 ONLY — never touch GPU-0 on this shared server
-    NVIDIA_VISIBLE_DEVICES=1 \
-    CUDA_VISIBLE_DEVICES=1
+    # NVIDIA runtime maps physical GPU-1 → device 0 inside container
+    # Do NOT set CUDA_VISIBLE_DEVICES — it would offset the remapped index
+    NVIDIA_VISIBLE_DEVICES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl git build-essential \
