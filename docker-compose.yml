@@ -51,20 +51,21 @@ services:
     volumes:
       - ./artifacts/mlflow:/mlflow
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 4
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   prometheus:
     image: prom/prometheus:latest
     container_name: v2ai-prometheus
     restart: unless-stopped
+    user: root
     ports:
       - "9090:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./artifacts/prometheus:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -75,12 +76,15 @@ services:
     image: grafana/grafana:latest
     container_name: v2ai-grafana
     restart: unless-stopped
+    user: root
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: v2ai_grafana
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PATHS_DATA: /var/lib/grafana
+      GF_PATHS_LOGS: /var/log/grafana
     volumes:
       - ./artifacts/grafana:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
