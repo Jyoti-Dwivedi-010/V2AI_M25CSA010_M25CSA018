@@ -1,0 +1,46 @@
+project:
+  name: MLOps-LLMOps-RAG
+  objective: >
+    Build an end-to-end context-aware QA system with experiment tracking,
+    model versioning, monitoring, and cloud-native deployment.
+
+pipeline:
+  - stage: data_preparation
+    description: Collect domain documents and maintain a versioned knowledge base.
+    inputs:
+      - data/knowledge/*.txt
+    outputs:
+      - artifacts/vectorstore
+
+  - stage: indexing
+    description: Build FAISS index using Hugging Face sentence transformer embeddings.
+    command: python -m app.services.rag_service
+
+  - stage: inference_flow
+    description: LangChain context flow (retrieve -> prompt -> generate -> parse).
+    serving_endpoint: POST /query
+
+  - stage: experiment_tracking
+    description: Log latency and answer quality metrics to MLflow and optional WandB.
+    outputs:
+      - mlflow runs
+      - artifacts/reports/latest_eval.json
+
+  - stage: model_versioning
+    description: Register pyfunc wrapper and associated vectorstore in MLflow registry.
+    command: python -m app.experiments.register_model
+
+  - stage: monitoring
+    description: Store request traces and run periodic drift checks.
+    outputs:
+      - artifacts/monitoring/request_logs.jsonl
+      - artifacts/monitoring/drift_report.json
+
+  - stage: ci_cd
+    description: GitHub Actions for test/lint/build/deploy.
+
+deployment:
+  local:
+    command: docker compose up --build
+  kubernetes:
+    command: kubectl apply -f k8s/

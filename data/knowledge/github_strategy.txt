@@ -1,0 +1,19 @@
+GitHub Versioning and Branching SOP
+
+Branching model
+- main: production-ready branch.
+- develop: integration branch for sprint features.
+- feature/*: individual feature work.
+- hotfix/*: urgent fixes from production.
+
+Versioning
+- Use semantic version tags: vMAJOR.MINOR.PATCH.
+- Every stable release should include changelog entry and model registry version.
+
+Pull Request checks
+- CI pipeline must pass lint and tests before merge.
+- Require at least one reviewer.
+- Squash merge recommended for clean history.
+
+Model versioning alignment
+- Every model registration in MLflow should include git commit SHA as a tag.

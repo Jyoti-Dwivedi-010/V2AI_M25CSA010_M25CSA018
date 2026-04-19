@@ -1,0 +1,107 @@
+[
+  {
+    "question": "What is gradient descent and how does it minimize the loss function?",
+    "expected_keywords": ["gradient", "descent", "loss", "minimize", "learning rate"],
+    "expected_sources": [],
+    "reference_answer": "Gradient descent is an optimization algorithm that iteratively updates model parameters in the direction opposite to the gradient of the loss function, thereby minimizing the loss.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "Explain the role of the attention mechanism in transformer models.",
+    "expected_keywords": ["attention", "transformer", "query", "key", "value", "weights"],
+    "expected_sources": [],
+    "reference_answer": "The attention mechanism allows transformers to weigh the importance of different tokens in a sequence when producing each output, using query, key, and value projections to compute weighted representations of the input.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "What is overfitting and how can dropout help prevent it?",
+    "expected_keywords": ["overfitting", "dropout", "regularization", "training", "generalization"],
+    "expected_sources": [],
+    "reference_answer": "Overfitting occurs when a model learns the training data too well and fails to generalize. Dropout prevents this by randomly deactivating neurons during training, forcing the network to learn more robust features.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "How does backpropagation compute gradients in a neural network?",
+    "expected_keywords": ["backpropagation", "gradient", "chain rule", "weights", "error"],
+    "expected_sources": [],
+    "reference_answer": "Backpropagation applies the chain rule of calculus to compute the gradient of the loss with respect to each weight by propagating the error signal backwards through the network layers.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "What is the difference between supervised and unsupervised learning?",
+    "expected_keywords": ["supervised", "unsupervised", "labels", "features", "clustering"],
+    "expected_sources": [],
+    "reference_answer": "Supervised learning trains models on labeled data where inputs have known outputs. Unsupervised learning finds patterns in unlabeled data through techniques like clustering and dimensionality reduction.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "Describe how a convolutional neural network extracts features from images.",
+    "expected_keywords": ["convolutional", "filter", "features", "pooling", "activation"],
+    "expected_sources": [],
+    "reference_answer": "CNNs use learnable filters to convolve across the input image, extracting local features. Pooling layers reduce spatial dimensions and activation functions introduce non-linearity, enabling hierarchical feature learning.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "What is the vanishing gradient problem and how do residual connections address it?",
+    "expected_keywords": ["vanishing gradient", "residual", "skip connection", "deep network", "training"],
+    "expected_sources": [],
+    "reference_answer": "The vanishing gradient problem occurs when gradients become very small in deep networks, hindering learning. Residual connections add a skip path that allows gradients to flow directly, enabling training of very deep networks.",
+    "difficulty": "hard"
+  },
+  {
+    "question": "What is BERT and how is it trained using masked language modeling?",
+    "expected_keywords": ["BERT", "masked language", "bidirectional", "pretraining", "transformer"],
+    "expected_sources": [],
+    "reference_answer": "BERT is a bidirectional transformer pretrained on masked language modeling, where random tokens are masked and the model predicts them using context from both left and right sides of the sequence.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "Explain the concept of transfer learning in NLP.",
+    "expected_keywords": ["transfer learning", "pretrained", "fine-tuning", "NLP", "downstream"],
+    "expected_sources": [],
+    "reference_answer": "Transfer learning in NLP involves pretraining a model on large corpora and then fine-tuning it on a smaller task-specific dataset, leveraging knowledge from pretraining to improve performance.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "How does the encoder-decoder architecture work in sequence-to-sequence models?",
+    "expected_keywords": ["encoder", "decoder", "sequence", "hidden state", "context vector"],
+    "expected_sources": [],
+    "reference_answer": "The encoder processes the input sequence into a context vector or set of hidden states. The decoder uses this context to generate the output sequence one token at a time, attending to the encoder outputs.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "What is regularization and why is it important in machine learning?",
+    "expected_keywords": ["regularization", "L1", "L2", "overfitting", "penalty"],
+    "expected_sources": [],
+    "reference_answer": "Regularization adds a penalty term to the loss function to discourage complex models and prevent overfitting. L1 regularization induces sparsity while L2 regularization penalizes large weights.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "What is batch normalization and how does it speed up training?",
+    "expected_keywords": ["batch normalization", "normalize", "distribution", "training", "stability"],
+    "expected_sources": [],
+    "reference_answer": "Batch normalization normalizes the activations of each layer across the mini-batch, reducing internal covariate shift, stabilizing gradients, and enabling higher learning rates for faster training.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "Explain what a language model is and how it generates text.",
+    "expected_keywords": ["language model", "probability", "tokens", "generation", "sequence"],
+    "expected_sources": [],
+    "reference_answer": "A language model assigns probabilities to sequences of tokens and generates text by iteratively sampling the next token from the predicted probability distribution conditioned on the previous tokens.",
+    "difficulty": "easy"
+  },
+  {
+    "question": "What is the role of positional encoding in transformer models?",
+    "expected_keywords": ["positional encoding", "position", "order", "transformer", "sequence"],
+    "expected_sources": [],
+    "reference_answer": "Transformers lack inherent notion of position, so positional encodings are added to token embeddings to inject information about the order of tokens in the sequence.",
+    "difficulty": "medium"
+  },
+  {
+    "question": "Describe the difference between precision and recall in classification tasks.",
+    "expected_keywords": ["precision", "recall", "true positive", "false positive", "F1"],
+    "expected_sources": [],
+    "reference_answer": "Precision is the proportion of predicted positives that are truly positive, while recall is the proportion of actual positives correctly identified. F1 score is the harmonic mean of both.",
+    "difficulty": "easy"
+  }
+]

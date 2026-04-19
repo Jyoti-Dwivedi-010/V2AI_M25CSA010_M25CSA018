@@ -1,0 +1,91 @@
+name: CD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/v2ai-api:latest
+            ghcr.io/${{ github.repository_owner }}/v2ai-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push GPU API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api.gpu
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/v2ai-api-gpu:latest
+            ghcr.io/${{ github.repository_owner }}/v2ai-api-gpu:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.ui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/v2ai-ui:latest
+            ghcr.io/${{ github.repository_owner }}/v2ai-ui:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-server:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SERVER_HOST != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH to GPU server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            cd ~/v2ai || git clone https://github.com/${{ github.repository }}.git ~/v2ai && cd ~/v2ai
+            git pull origin main
+            cp .env.server-docker .env
+            # Use GPU profile — GPU-1 only
+            docker-compose --profile gpu pull api-gpu || true
+            docker-compose up -d postgres minio mlflow prometheus grafana
+            sleep 10
+            docker-compose --profile gpu up -d api-gpu ui
+            docker-compose ps

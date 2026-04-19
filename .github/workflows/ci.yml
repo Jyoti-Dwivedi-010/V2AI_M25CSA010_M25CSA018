@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-ci.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+
+      - name: Lint (ruff)
+        run: ruff check src tests scripts
+
+      - name: Type check (mypy)
+        run: mypy src --ignore-missing-imports --no-error-summary || true
+
+      - name: Run tests with coverage
+        env:
+          PYTHONPATH: src
+        run: |
+          pytest -q --cov=src --cov-report=term-missing --cov-fail-under=60
+
+      - name: Build API Docker image (validate only)
+        if: github.event_name == 'pull_request'
+        run: |
+          docker build -f docker/Dockerfile.api -t v2ai-api:ci-check . --no-cache
+
+      - name: Build UI Docker image (validate only)
+        if: github.event_name == 'pull_request'
+        run: |
+          docker build -f docker/Dockerfile.ui -t v2ai-ui:ci-check . --no-cache

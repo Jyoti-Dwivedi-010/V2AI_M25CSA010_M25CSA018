@@ -1,0 +1,14 @@
+Monitoring SOP
+
+Online Monitoring
+- Every API query is logged to artifacts/monitoring/request_logs.jsonl.
+- Logged fields include latency, question length, answer length, sources and model name.
+- Prometheus metrics are exposed on GET /metrics.
+
+Offline Drift Checks
+- Run python -m app.monitoring.drift_check to compare baseline vs recent windows.
+- Drift alerts are triggered when latency shift > 30 percent or question length shift > 40 percent.
+- Output report is saved to artifacts/monitoring/drift_report.json.
+
+Action Plan
+- If drift alert is raised: review incoming data pattern, rebuild index, and re-run evaluation.
