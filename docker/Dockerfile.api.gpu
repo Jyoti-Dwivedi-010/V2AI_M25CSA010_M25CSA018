@@ -1,5 +1,5 @@
 # Dockerfile.api.gpu
-# Base: pytorch/pytorch:latest — already has GPU torch, confirmed working on this server.
+# Base: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 #
 # KEY DESIGN DECISION:
 # We do NOT reinstall torch from PyPI. requirements.txt has 'torch>=2.4' which pip
@@ -8,7 +8,7 @@
 # sentence-transformers and openai-whisper also depend on torch, but pip will see
 # the base image's conda-installed torch as satisfying those constraints and skip it.
 
-FROM pytorch/pytorch:latest
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
