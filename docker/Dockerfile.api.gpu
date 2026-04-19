@@ -1,29 +1,30 @@
 # Dockerfile.api.gpu — GPU-enabled API image
-# Uses GPU-1 ONLY (NVIDIA_VISIBLE_DEVICES=1 set via docker-compose)
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+# Uses pytorch/pytorch base (same image family as other working containers on this server)
+# Locked to GPU-1 via NVIDIA_VISIBLE_DEVICES=1 + docker-compose runtime: nvidia
+
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    # Lock to GPU-1 only — do not touch GPU-0
+    # Lock to GPU-1 ONLY — never touch GPU-0 on this shared server
     NVIDIA_VISIBLE_DEVICES=1 \
     CUDA_VISIBLE_DEVICES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-dev python3-pip \
     ffmpeg curl git build-essential \
-    && ln -sf python3.11 /usr/bin/python3 \
-    && ln -sf python3 /usr/bin/python \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# PyTorch is already in the base image — install only app-level requirements
+# Avoid reinstalling torch to save build time and prevent version conflicts
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
-    && pip install -r requirements.txt \
+    && grep -v "^torch" requirements.txt > /tmp/requirements_no_torch.txt \
+    && pip install -r /tmp/requirements_no_torch.txt \
     && pip install faiss-gpu 2>/dev/null || pip install faiss-cpu
 
 COPY src/ ./src/
