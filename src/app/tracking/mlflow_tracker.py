@@ -1,8 +1,7 @@
 """
 mlflow_tracker.py
 -----------------
-Enhanced MLflow tracker that logs every pipeline stage (addressing guide comment on
-missing experiment tracking details).
+Enhanced MLflow tracker that logs every pipeline stage.
 
 Stages tracked:
   - Full pipeline session run (parent run)
@@ -12,58 +11,73 @@ Stages tracked:
   - Per-inference run: latency, question/answer length, source count
   - Evaluation run: ROUGE-L, accuracy_proxy, dataset size
   - Model registration with stage promotion (Staging / Production)
+
+Resilience: MLflow server connection is attempted lazily on each tracking
+call — if the server is temporarily unavailable at startup, tracking
+resumes automatically once the server becomes reachable.
 """
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import contextmanager
 from typing import Any
 
 try:
     import mlflow
     from mlflow.tracking import MlflowClient
-except ImportError:  # pragma: no cover - optional for lightweight CI
+except ImportError:  # pragma: no cover
     mlflow = None  # type: ignore[assignment]
     MlflowClient = None  # type: ignore[assignment]
-
-from app.config import load_settings
 
 logger = logging.getLogger(__name__)
 
 
 class MLflowTracker:
     def __init__(self) -> None:
-        self.enabled = mlflow is not None
+        self._mlflow_available = mlflow is not None
         self._client: Any = None
+        # Don't connect at startup — connect lazily on first use.
+        # This avoids failures when MLflow container is still starting.
+        self._tracking_uri: str = os.getenv(
+            "MLFLOW_TRACKING_URI", "http://mlflow:5000"
+        )
+        self._experiment_name: str = os.getenv(
+            "MLFLOW_EXPERIMENT_NAME", "rag_context_flow_experiments"
+        )
 
-        if not self.enabled:
-            return
+    # ------------------------------------------------------------------
+    # Internal: lazy connect + reconnect
+    # ------------------------------------------------------------------
 
-        settings = load_settings()
+    def _try_connect(self) -> bool:
+        """Attempt to connect to MLflow. Returns True if successful."""
+        if not self._mlflow_available:
+            return False
         try:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-            mlflow.set_experiment(settings.mlflow_experiment_name)
-            if MlflowClient is not None:
-                self._client = MlflowClient(tracking_uri=settings.mlflow_tracking_uri)
-        except Exception as exc:  # pragma: no cover - backend may be offline
-            self.enabled = False
-            logger.warning(
-                "MLflow disabled at startup (%s): %s",
-                settings.mlflow_tracking_uri,
-                exc,
-            )
+            mlflow.set_tracking_uri(self._tracking_uri)
+            mlflow.set_experiment(self._experiment_name)
+            if MlflowClient is not None and self._client is None:
+                self._client = MlflowClient(tracking_uri=self._tracking_uri)
+            return True
+        except Exception as exc:
+            logger.debug("MLflow not reachable (%s): %s", self._tracking_uri, exc)
+            return False
+
+    @property
+    def enabled(self) -> bool:
+        return self._mlflow_available
 
     @contextmanager
     def start_run(self, run_name: str, nested: bool = False):
-        if not self.enabled:
+        if not self._try_connect():
             yield None
             return
         try:
             with mlflow.start_run(run_name=run_name, nested=nested) as run:
                 yield run
-        except Exception as exc:  # pragma: no cover - backend may be offline
-            self.enabled = False
-            logger.warning("MLflow disabled during start_run(%s): %s", run_name, exc)
+        except Exception as exc:
+            logger.warning("MLflow start_run(%s) failed: %s", run_name, exc)
             yield None
 
     # ------------------------------------------------------------------
@@ -82,10 +96,11 @@ class MLflowTracker:
         Log a full lecture processing session as a parent MLflow run with
         three child runs (transcription, summarization, indexing).
         """
-        if not self.enabled:
+        if not self._try_connect():
+            logger.info("MLflow unavailable — skipping pipeline session log")
             return
         try:
-            with mlflow.start_run(run_name=f"pipeline-session-{session_id[:8]}") as _parent:
+            with mlflow.start_run(run_name=f"pipeline-session-{session_id[:8]}"):
                 mlflow.set_tag("session_id", session_id)
                 mlflow.log_params(
                     {k: str(v)[:250] for k, v in model_params.items()}
@@ -109,7 +124,8 @@ class MLflowTracker:
                         "language", str(transcription_meta.get("language", "unknown"))
                     )
                     mlflow.log_param(
-                        "whisper_model", str(transcription_meta.get("whisper_model", "base"))
+                        "whisper_model",
+                        str(transcription_meta.get("whisper_model", "base")),
                     )
 
                 # Child run 2: Summarization
@@ -123,7 +139,8 @@ class MLflowTracker:
                         float(summarization_meta.get("summary_length", 0)),
                     )
                     mlflow.log_param(
-                        "summary_model", str(summarization_meta.get("model_name", "unknown"))
+                        "summary_model",
+                        str(summarization_meta.get("model_name", "unknown")),
                     )
                     mlflow.log_metric(
                         "summarization_time_seconds",
@@ -149,7 +166,7 @@ class MLflowTracker:
                         str(indexing_meta.get("embedding_model", "unknown")),
                     )
 
-        except Exception as exc:  # pragma: no cover - backend may be offline
+        except Exception as exc:
             logger.warning("MLflow log_pipeline_session failed: %s", exc)
 
     # ------------------------------------------------------------------
@@ -157,18 +174,23 @@ class MLflowTracker:
     # ------------------------------------------------------------------
 
     def log_inference(self, record: dict[str, Any]) -> None:
-        if not self.enabled:
+        if not self._try_connect():
             return
         try:
             with mlflow.start_run(run_name="inference"):
                 mlflow.log_metric("latency_ms", float(record.get("latency_ms", 0.0)))
-                mlflow.log_metric("question_length", float(record.get("question_length", 0)))
-                mlflow.log_metric("answer_length", float(record.get("answer_length", 0)))
-                mlflow.log_metric("source_count", float(len(record.get("sources", []))))
+                mlflow.log_metric(
+                    "question_length", float(record.get("question_length", 0))
+                )
+                mlflow.log_metric(
+                    "answer_length", float(record.get("answer_length", 0))
+                )
+                mlflow.log_metric(
+                    "source_count", float(len(record.get("sources", [])))
+                )
                 mlflow.log_dict(record, "inference_record.json")
-        except Exception as exc:  # pragma: no cover - backend may be offline
-            self.enabled = False
-            logger.warning("MLflow disabled during log_inference: %s", exc)
+        except Exception as exc:
+            logger.warning("MLflow log_inference failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Model Registration + Stage Promotion
@@ -176,17 +198,17 @@ class MLflowTracker:
 
     def log_model_params(self, params: dict[str, Any]) -> None:
         """Log current model configuration as params on an MLflow run."""
-        if not self.enabled:
+        if not self._try_connect():
             return
         try:
             with mlflow.start_run(run_name="model-config"):
                 mlflow.log_params({k: str(v)[:250] for k, v in params.items()})
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("MLflow log_model_params failed: %s", exc)
 
     def promote_to_staging(self, model_name: str, version: int | str) -> None:
         """Transition a registered model version to the Staging stage."""
-        if not self.enabled or self._client is None:
+        if not self._try_connect() or self._client is None:
             return
         try:
             self._client.transition_model_version_stage(
@@ -196,12 +218,12 @@ class MLflowTracker:
                 archive_existing_versions=False,
             )
             logger.info("Promoted %s v%s → Staging", model_name, version)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("MLflow promote_to_staging failed: %s", exc)
 
     def promote_to_production(self, model_name: str, version: int | str) -> None:
         """Transition a registered model version to the Production stage."""
-        if not self.enabled or self._client is None:
+        if not self._try_connect() or self._client is None:
             return
         try:
             self._client.transition_model_version_stage(
@@ -211,5 +233,5 @@ class MLflowTracker:
                 archive_existing_versions=True,
             )
             logger.info("Promoted %s v%s → Production", model_name, version)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("MLflow promote_to_production failed: %s", exc)
