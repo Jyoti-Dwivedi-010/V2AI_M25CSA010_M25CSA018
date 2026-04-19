@@ -4,6 +4,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+*.pyc
+
+# Binaries (ffmpeg, etc.)
+artifacts/bin/
+
 
 # Virtual environments
 .venv/
