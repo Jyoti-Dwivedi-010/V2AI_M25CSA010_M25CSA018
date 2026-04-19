@@ -44,6 +44,7 @@ services:
       dockerfile: docker/Dockerfile.mlflow
     container_name: v2ai-mlflow
     restart: unless-stopped
+    user: root
     ports:
       - "5000:5000"
     volumes:
@@ -53,7 +54,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
 
   prometheus:
     image: prom/prometheus:latest
@@ -168,7 +169,6 @@ services:
       timeout: 10s
       retries: 4
 
-  # ── GPU profile — activate with: docker-compose --profile gpu up ──────────
   api-gpu:
     build:
       context: .
@@ -177,6 +177,8 @@ services:
       - gpu
     container_name: v2ai-api-gpu
     restart: unless-stopped
+    # nvidia runtime — works on non-swarm docker compose (requires nvidia-container-runtime)
+    runtime: nvidia
     environment:
       PROJECT_ROOT: /app
       APP_ENV: docker-gpu
@@ -209,7 +211,7 @@ services:
       GENERATION_MAX_TOKENS: 256
       GENERATION_TEMPERATURE: 0.2
       USE_GPU: "true"
-      # GPU-1 only — do NOT use GPU-0 (shared server)
+      # GPU-1 ONLY — do NOT touch GPU-0 (shared server constraint)
       NVIDIA_VISIBLE_DEVICES: "1"
       CUDA_VISIBLE_DEVICES: "1"
       WANDB_API_KEY: ${WANDB_API_KEY:-}
@@ -226,10 +228,3 @@ services:
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["1"]
-              capabilities: [gpu]
