@@ -1,15 +1,13 @@
-# Dockerfile.api.gpu — GPU-enabled API image
-# Uses pytorch/pytorch base (same image family as other working containers on this server)
-# Locked to GPU-1 via NVIDIA_VISIBLE_DEVICES=1 + docker-compose runtime: nvidia
+# Dockerfile.api.gpu
+# Uses pytorch/pytorch:latest (already cached on server, confirmed CUDA working)
+# Forces GPU torch reinstall after all deps to prevent CPU-only overwrites
 
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:latest
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    # NVIDIA runtime maps physical GPU-1 → device 0 inside container
-    # Do NOT set CUDA_VISIBLE_DEVICES — it would offset the remapped index
     NVIDIA_VISIBLE_DEVICES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,13 +17,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# PyTorch is already in the base image — install only app-level requirements
-# Avoid reinstalling torch to save build time and prevent version conflicts
 COPY requirements.txt .
+
+# Install all app requirements
+# Note: packages like openai-whisper / sentence-transformers may silently
+# install CPU-only torch as a transitive dependency.
 RUN pip install --upgrade pip \
-    && grep -v "^torch" requirements.txt > /tmp/requirements_no_torch.txt \
-    && pip install -r /tmp/requirements_no_torch.txt \
+    && pip install -r requirements.txt \
     && pip install faiss-gpu 2>/dev/null || pip install faiss-cpu
+
+# ── GPU torch restore ─────────────────────────────────────────────────────
+# Reinstall torch with CUDA after all deps, to override any CPU-only version.
+# pytorch/pytorch:latest is built with CUDA 12.1 libraries.
+RUN pip install --force-reinstall --no-deps \
+    "torch" \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Build-time sanity check — verifies torch has CUDA support compiled in.
+# (GPU devices are not available during build, but torch.version.cuda is.)
+RUN python3 -c "
+import torch
+print('Torch version:', torch.__version__)
+print('CUDA built for:', torch.version.cuda)
+assert torch.version.cuda is not None, 'ERROR: CPU-only torch still installed!'
+print('OK: torch is CUDA-capable')
+"
 
 COPY src/ ./src/
 COPY data/ ./data/
