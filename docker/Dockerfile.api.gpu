@@ -34,14 +34,7 @@ RUN pip install --force-reinstall --no-deps \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Build-time sanity check — verifies torch has CUDA support compiled in.
-# (GPU devices are not available during build, but torch.version.cuda is.)
-RUN python3 -c "
-import torch
-print('Torch version:', torch.__version__)
-print('CUDA built for:', torch.version.cuda)
-assert torch.version.cuda is not None, 'ERROR: CPU-only torch still installed!'
-print('OK: torch is CUDA-capable')
-"
+RUN python3 -c "import torch; v=torch.version.cuda; print('Torch',torch.__version__,'CUDA:',v); assert v is not None,'CPU-only torch!'; print('OK: CUDA-capable')"
 
 COPY src/ ./src/
 COPY data/ ./data/
