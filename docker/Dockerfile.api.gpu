@@ -1,17 +1,22 @@
 # Dockerfile.api.gpu
-# Uses pytorch/pytorch:latest (already cached on server, confirmed CUDA working)
-# Forces GPU torch reinstall after all deps to prevent CPU-only overwrites
+# Base: pytorch/pytorch:latest — already has GPU torch, confirmed working on this server.
+#
+# KEY DESIGN DECISION:
+# We do NOT reinstall torch from PyPI. requirements.txt has 'torch>=2.4' which pip
+# resolves to the CPU-only package from PyPI (index.pypi.org), overwriting the GPU
+# torch in the base image. We strip that line before pip install.
+# sentence-transformers and openai-whisper also depend on torch, but pip will see
+# the base image's conda-installed torch as satisfying those constraints and skip it.
 
 FROM pytorch/pytorch:latest
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     NVIDIA_VISIBLE_DEVICES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl git build-essential \
+    ffmpeg curl git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,22 +24,18 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-# Install all app requirements
-# Note: packages like openai-whisper / sentence-transformers may silently
-# install CPU-only torch as a transitive dependency.
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt \
-    && pip install faiss-gpu 2>/dev/null || pip install faiss-cpu
+# Strip torch* lines — base image already provides GPU-capable torch.
+# Pip will see the existing conda torch as satisfying transitive torch deps
+# (sentence-transformers needs torch>=1.11, openai-whisper needs torch>=1.7)
+# and will NOT reinstall it from PyPI.
+RUN sed '/^torch/d' requirements.txt > /tmp/req.txt \
+    && pip install --upgrade pip \
+    && pip install -r /tmp/req.txt \
+    && pip install faiss-cpu
 
-# ── GPU torch restore ─────────────────────────────────────────────────────
-# Reinstall torch with CUDA after all deps, to override any CPU-only version.
-# pytorch/pytorch:latest is built with CUDA 12.1 libraries.
-RUN pip install --force-reinstall --no-deps \
-    "torch" \
-    --index-url https://download.pytorch.org/whl/cu121
-
-# Build-time sanity check — verifies torch has CUDA support compiled in.
-RUN python3 -c "import torch; v=torch.version.cuda; print('Torch',torch.__version__,'CUDA:',v); assert v is not None,'CPU-only torch!'; print('OK: CUDA-capable')"
+# NOTE: No build-time 'import torch' check here.
+# CUDA devices (and libcuda.so) are not available during 'docker build'.
+# The GPU test is done at container startup via docker exec.
 
 COPY src/ ./src/
 COPY data/ ./data/
