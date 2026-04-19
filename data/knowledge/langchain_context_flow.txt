@@ -1,0 +1,16 @@
+LangChain Context Flow SOP
+
+The context flow uses a retrieval-augmented generation (RAG) pattern.
+1) Retrieve: Question is embedded and matched against FAISS vector index.
+2) Prompt: Retrieved chunks are inserted into a controlled prompt template.
+3) Generate: Hugging Face generation model produces an answer constrained by context.
+4) Parse: Output parser returns plain text answer for API and UI.
+
+Operational Controls
+- Retrieval top-k is configured through RETRIEVAL_TOP_K.
+- Prompt explicitly blocks hallucinations by requiring context-backed answers.
+- Empty-context behavior should return a safe fallback response.
+
+Why this matters
+- This solves the guide feedback about elaborating LangChain context flow.
+- The chain design is deterministic enough for repeatable experiments.

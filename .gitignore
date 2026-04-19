@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+.venv*/
+env/
+
+# Local env files
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Artifacts (runtime data — do not commit)
+artifacts/vectorstore/
+artifacts/reports/
+artifacts/monitoring/*.json
+artifacts/monitoring/*.jsonl
+artifacts/uploads/
+artifacts/transcripts/
+artifacts/postgres/
+artifacts/minio/
+artifacts/prometheus/
+artifacts/grafana/
+artifacts/mlflow/
+mlruns/
+mlflow.db
+*.db
+
+# Rendered k8s manifests
+k8s/*.rendered.yaml
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Secrets (never commit real .env)
+.env.local
+

@@ -1,0 +1,19 @@
+Kubernetes Deployment SOP
+
+Core resources
+- Namespace: major-project
+- Deployments: api, ui, mlflow
+- Services: api-service, ui-service, mlflow-service
+- ConfigMap: app-config
+
+Deployment sequence
+1) kubectl apply -f k8s/namespace.yaml
+2) kubectl apply -f k8s/configmap.yaml
+3) kubectl apply -f k8s/mlflow-deployment.yaml
+4) kubectl apply -f k8s/api-deployment.yaml
+5) kubectl apply -f k8s/ui-deployment.yaml
+6) kubectl apply -f k8s/hpa-api.yaml
+
+GPU option
+- Apply k8s/api-deployment-gpu.yaml when GPU scheduling is required.
+- Ensure NVIDIA device plugin is installed in the cluster.

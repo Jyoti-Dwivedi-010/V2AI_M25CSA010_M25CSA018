@@ -1,0 +1,18 @@
+Experiment Tracking SOP
+
+This project supports MLflow as primary experiment tracker and optional Weights & Biases.
+
+MLflow
+- Tracking URI configurable via MLFLOW_TRACKING_URI.
+- Experiment name controlled via MLFLOW_EXPERIMENT_NAME.
+- Evaluation logs: avg_keyword_coverage, avg_source_match, avg_latency_ms, accuracy_proxy.
+- Inference logs: latency_ms, source_count, answer_length, question_length.
+
+WandB (optional)
+- Controlled by ENABLE_WANDB=true.
+- Project name configured via WANDB_PROJECT.
+- Useful for comparative dashboards and team collaboration.
+
+Validation of 90-95 percent claim
+- Accuracy claim must be demonstrated using evaluation dataset in data/evaluation/eval_set.json.
+- The generated artifact artifacts/reports/latest_eval.json is the evidence report.

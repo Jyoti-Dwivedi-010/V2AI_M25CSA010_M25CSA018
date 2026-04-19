@@ -1,0 +1,230 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: v2ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: v2ai
+      POSTGRES_USER: v2ai
+      POSTGRES_PASSWORD: v2ai_secure_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./artifacts/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U v2ai -d v2ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: v2ai-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./artifacts/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mlflow
+    container_name: v2ai-mlflow
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./artifacts/mlflow:/mlflow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: v2ai-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./artifacts/prometheus:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: v2ai-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: v2ai_grafana
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./artifacts/grafana:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: v2ai-api
+    restart: unless-stopped
+    environment:
+      PROJECT_ROOT: /app
+      APP_ENV: docker
+      PROJECT_NAME: V2AI-Lecture-Video-Understanding-System
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: rag_context_flow_experiments
+      REGISTERED_MODEL_NAME: rag-context-model
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_SUMMARY_MODEL: facebook/bart-large-cnn
+      HF_SUMMARY_MODEL_CPU: sshleifer/distilbart-cnn-12-6
+      HF_SUMMARY_MODEL_GPU: facebook/bart-large-cnn
+      HF_GENERATION_MODEL: google/flan-t5-base
+      HF_GENERATION_MODEL_CPU: google/flan-t5-small
+      HF_GENERATION_MODEL_GPU: google/flan-t5-base
+      HF_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      WHISPER_MODEL_NAME: base
+      WHISPER_LANGUAGE: en
+      DATABASE_URL: postgresql+psycopg2://v2ai:v2ai_secure_pass@postgres:5432/v2ai
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: lecture-artifacts
+      MINIO_SECURE: "false"
+      UPLOADS_PATH: /app/artifacts/uploads
+      TRANSCRIPT_STORE_PATH: /app/artifacts/transcripts
+      VECTOR_STORE_PATH: /app/artifacts/vectorstore
+      REQUEST_LOG_PATH: /app/artifacts/monitoring/request_logs.jsonl
+      RETRIEVAL_TOP_K: 4
+      CONCEPTS_TOP_K: 12
+      GENERATION_MAX_TOKENS: 256
+      GENERATION_TEMPERATURE: 0.2
+      USE_GPU: "false"
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      WANDB_PROJECT: v2ai-rag
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    container_name: v2ai-ui
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 4
+
+  # ── GPU profile — activate with: docker-compose --profile gpu up ──────────
+  api-gpu:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api.gpu
+    profiles:
+      - gpu
+    container_name: v2ai-api-gpu
+    restart: unless-stopped
+    environment:
+      PROJECT_ROOT: /app
+      APP_ENV: docker-gpu
+      PROJECT_NAME: V2AI-Lecture-Video-Understanding-System
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: rag_context_flow_experiments
+      REGISTERED_MODEL_NAME: rag-context-model
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_SUMMARY_MODEL: facebook/bart-large-cnn
+      HF_SUMMARY_MODEL_CPU: sshleifer/distilbart-cnn-12-6
+      HF_SUMMARY_MODEL_GPU: facebook/bart-large-cnn
+      HF_GENERATION_MODEL: google/flan-t5-base
+      HF_GENERATION_MODEL_CPU: google/flan-t5-small
+      HF_GENERATION_MODEL_GPU: google/flan-t5-base
+      HF_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      WHISPER_MODEL_NAME: base
+      WHISPER_LANGUAGE: en
+      DATABASE_URL: postgresql+psycopg2://v2ai:v2ai_secure_pass@postgres:5432/v2ai
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: lecture-artifacts
+      MINIO_SECURE: "false"
+      UPLOADS_PATH: /app/artifacts/uploads
+      TRANSCRIPT_STORE_PATH: /app/artifacts/transcripts
+      VECTOR_STORE_PATH: /app/artifacts/vectorstore
+      REQUEST_LOG_PATH: /app/artifacts/monitoring/request_logs.jsonl
+      RETRIEVAL_TOP_K: 4
+      CONCEPTS_TOP_K: 12
+      GENERATION_MAX_TOKENS: 256
+      GENERATION_TEMPERATURE: 0.2
+      USE_GPU: "true"
+      # GPU-1 only — do NOT use GPU-0 (shared server)
+      NVIDIA_VISIBLE_DEVICES: "1"
+      CUDA_VISIBLE_DEVICES: "1"
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      WANDB_PROJECT: v2ai-rag
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]

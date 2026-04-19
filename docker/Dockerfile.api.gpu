@@ -1,0 +1,38 @@
+# Dockerfile.api.gpu — GPU-enabled API image
+# Uses GPU-1 ONLY (NVIDIA_VISIBLE_DEVICES=1 set via docker-compose)
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    # Lock to GPU-1 only — do not touch GPU-0
+    NVIDIA_VISIBLE_DEVICES=1 \
+    CUDA_VISIBLE_DEVICES=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-dev python3-pip \
+    ffmpeg curl git build-essential \
+    && ln -sf python3.11 /usr/bin/python3 \
+    && ln -sf python3 /usr/bin/python \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+    && pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+    && pip install -r requirements.txt \
+    && pip install faiss-gpu 2>/dev/null || pip install faiss-cpu
+
+COPY src/ ./src/
+COPY data/ ./data/
+
+RUN mkdir -p artifacts/uploads artifacts/transcripts artifacts/vectorstore \
+    artifacts/monitoring artifacts/reports artifacts/mlflow
+
+ENV PYTHONPATH=/app/src
+EXPOSE 8000
+
+CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
