@@ -25,12 +25,12 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Strip torch* lines — base image already provides GPU-capable torch.
-# Pip will see the existing conda torch as satisfying transitive torch deps
-# (sentence-transformers needs torch>=1.11, openai-whisper needs torch>=1.7)
-# and will NOT reinstall it from PyPI.
-RUN sed '/^torch/d' requirements.txt > /tmp/req.txt \
-    && pip install --upgrade pip \
+# Strip wandb — install separately with --prefer-binary to avoid source-build failures.
+RUN sed '/^torch/d; /^wandb/d' requirements.txt > /tmp/req.txt
+
+RUN pip install --upgrade pip setuptools wheel \
     && pip install -r /tmp/req.txt \
+    && pip install "wandb>=0.18,<1.0" --prefer-binary \
     && pip install faiss-cpu
 
 # NOTE: No build-time 'import torch' check here.
