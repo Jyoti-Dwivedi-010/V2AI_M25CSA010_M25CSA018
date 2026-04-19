@@ -29,9 +29,9 @@ COPY requirements.txt .
 RUN sed '/^torch/d; /^wandb/d' requirements.txt > /tmp/req.txt
 
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install -r /tmp/req.txt \
+    && pip install --prefer-binary -r /tmp/req.txt \
     && pip install "wandb>=0.18,<1.0" --prefer-binary \
-    && pip install faiss-cpu
+    && pip install faiss-cpu --prefer-binary
 
 # NOTE: No build-time 'import torch' check here.
 # CUDA devices (and libcuda.so) are not available during 'docker build'.
