@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
 *.pyc
 
 # Binaries (ffmpeg, etc.)
@@ -47,4 +48,3 @@ Thumbs.db
 
 # Secrets (never commit real .env)
 .env.local
-
