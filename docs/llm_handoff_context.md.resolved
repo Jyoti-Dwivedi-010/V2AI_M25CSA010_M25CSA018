@@ -1,0 +1,46 @@
+# V2AI: AI Lecture Video Understanding System - LLM Handoff Context
+
+You are taking over the development of **V2AI**, a production-ready AI lecture intelligence pipeline. Below is the comprehensive context of the project architecture, recent modifications, and remaining tasks.
+
+## 1. Project Overview
+V2AI ingests lecture videos (local uploads or YouTube URLs), transcribes them using OpenAI Whisper, and processes the text using a combination of local HuggingFace pipelines and cloud-based reasoning models. It outputs:
+- A dual-summary (In-depth explanation + Crisp bullet points)
+- Key concepts extraction
+- AI-generated Flashcards and Quizzes
+- Contextual Q&A using FAISS vector search
+
+## 2. Tech Stack & Architecture
+- **Backend**: FastAPI (Python)
+- **Frontend**: Streamlit
+- **Transcription**: `openai-whisper` (`base` model, running on GPU/CPU)
+- **NLP / Orchestration**: LangChain, HuggingFace Transformers (`google/flan-t5-base`, `facebook/bart-large-cnn`)
+- **Embeddings & Vector Store**: `sentence-transformers/all-MiniLM-L6-v2` + FAISS
+- **Cloud LLM Integration**: Groq API (`deepseek-r1-distill-llama-70b`)
+- **Tracking & Monitoring**: MLflow (experiment tracking), Prometheus/Grafana (metrics)
+- **Database**: Currently using SQLite (via SQLAlchemy) stored in Docker volumes.
+- **Infrastructure**: Fully containerized using `docker-compose` with distinct profiles (CPU vs. GPU via `api-gpu` container).
+
+## 3. Recent Major Upgrades (Completed)
+- **Hybrid Cloud Intelligence**: We shifted the primary load of summarization, flashcards, and quizzes to **DeepSeek R1** via the Groq API for vastly superior reasoning. 
+  - *Fallback Mechanism*: If `GROQ_API_KEY` is missing or the Groq SDK is unavailable, the system safely falls back to local HuggingFace models (`flan-t5-base` and `bart-large-cnn`).
+- **Dual Summarization**: 
+  - DeepSeek generates a massive, in-depth explanation (`AI Explained`).
+  - Local BART model takes DeepSeek's output and distills it into a short summary (`AI Summarized`).
+- **UI Redesign**: The Streamlit frontend (`src/ui/streamlit_app.py`) was updated to render these outputs using massive full-width toggle tabs (`st.tabs`), grouping the AI summaries alongside Flashcards, Quizzes, and the Video Player.
+- **Bug Fixes Applied**: 
+  - Fixed a `cannot reshape tensor of 0 elements` crash in BART caused by empty string chunks.
+  - Monkey-patched `langchain_huggingface.HuggingFacePipeline` to strip the `return_full_text` kwarg, which was crashing seq2seq models like T5.
+
+## 4. Current State & Known Behaviors
+- **Deployment**: The system is currently deployed on a university bare-metal server (`10.6.0.46`). The user accesses it via SSH port forwarding (`localhost:8501`). 
+- **GPU Usage**: The system heavily relies on `docker-compose.yml`. The user must use `docker compose --profile gpu up -d` to leverage the `api-gpu` container (which has PyTorch CUDA access). The UI container connects to the backend via the `API_BASE_URL` environment variable.
+
+## 5. Remaining Tasks (From the Project Proposal)
+To fully satisfy the academic project proposal, the following tasks are outstanding and should be your primary focus:
+1. **Public Cloud Deployment**: The proposal mandates "deployment on Google Cloud" or "HuggingFace Spaces". The current deployment is on a local university server. You need to prepare Terraform scripts, Kubernetes manifests, or a HuggingFace Space `Dockerfile` to migrate this setup to a public cloud.
+2. **PostgreSQL Migration**: The proposal explicitly mentions a "postgresql schema". While `docker-compose.yml` spins up a PostgreSQL container, the FastAPI application is currently connecting to a local `sqlite:///` database defined in the `.env` file. You need to ensure SQLAlchemy connects to the Postgres container, handle any required schema migrations, and verify data persistence.
+
+## 6. How to Assist the User
+- The user is operating on a tight deadline. Provide exact, copy-pasteable terminal commands.
+- The user accesses the server via SSH but often views files locally on Windows. Always clarify *where* a command should be run (Server terminal vs. Local Windows terminal).
+- Never introduce breaking changes to `docker-compose.yml` networking without a thorough explanation.
