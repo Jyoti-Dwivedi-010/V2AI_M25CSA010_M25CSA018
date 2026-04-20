@@ -746,49 +746,37 @@ class V2AIPipelineService:
 
         prompt = PromptTemplate.from_template(
             """
-You are an expert pedagogical AI tutor. Analyze the following lecture transcript, summary, and extracted concepts to create high-quality, deep, and educational study materials. 
-Do NOT ask basic definition questions. Instead, ask conceptual questions that test deep understanding (e.g., "Why is X preferred over Y?", "How does X affect Y?").
-For multiple-choice questions, provide exactly one correct answer and three highly plausible but incorrect distractors.
+You are a rigorous university professor. Your task is to generate deeply conceptual, highly difficult study materials from the provided lecture transcript chunk.
+The questions MUST require deep synthesis of the concepts, not mere definitions. They should be at the level of a graduate exam.
+Do NOT ask basic "What is X?" questions. Instead, ask "Why is X preferred over Y in this scenario?" or "How does X affect the outcome of Y?".
+For multiple-choice questions, provide exactly one correct answer and three highly plausible but tricky distractors.
 
-You must reply with strictly valid JSON matching this schema exactly, and nothing else. Do not wrap in markdown ```json blocks.
+You must reply with strictly valid JSON matching this schema exactly, and nothing else.
 {{
     "flashcards": [
-        {{"question": "Deep conceptual question 1?", "answer": "Detailed answer explaining the concept."}},
-        {{"question": "Deep conceptual question 2?", "answer": "Detailed answer explaining the concept."}},
-        {{"question": "Deep conceptual question 3?", "answer": "Detailed answer explaining the concept."}},
-        {{"question": "Deep conceptual question 4?", "answer": "Detailed answer explaining the concept."}},
-        {{"question": "Deep conceptual question 5?", "answer": "Detailed answer explaining the concept."}}
+        {{"question": "Deep conceptual question 1?", "answer": "Detailed, thorough answer explaining the concept."}},
+        {{"question": "Deep conceptual question 2?", "answer": "Detailed, thorough answer explaining the concept."}}
     ],
     "quiz_questions": [
         {{
             "question": "Challenging multiple choice question 1?",
-            "options": ["Distractor A", "Distractor B", "Distractor C", "Correct Answer"],
-            "correct_answer": "Correct Answer"
-        }},
-        {{
-            "question": "Challenging multiple choice question 2?",
-            "options": ["Distractor A", "Correct Answer", "Distractor B", "Distractor C"],
-            "correct_answer": "Correct Answer"
-        }},
-        {{
-            "question": "Challenging multiple choice question 3?",
-            "options": ["Correct Answer", "Distractor A", "Distractor B", "Distractor C"],
+            "options": ["Plausible Distractor A", "Plausible Distractor B", "Plausible Distractor C", "Correct Answer"],
             "correct_answer": "Correct Answer"
         }}
     ]
 }}
 
 Requirements:
-- Generate exactly 2 flashcards from this specific chunk.
-- Generate exactly 1 multiple-choice quiz question from this specific chunk.
+- Generate exactly 3 flashcards from this specific chunk.
+- Generate exactly 2 multiple-choice quiz questions from this specific chunk.
 
-Summary:
+Summary of overall lecture:
 {summary}
 
-Concepts:
+Concepts to focus on:
 {concepts}
 
-Transcript Chunk:
+Transcript Chunk to analyze:
 {transcript_excerpt}
 """.strip()
         )
