@@ -437,6 +437,7 @@ class V2AIPipelineService:
                     temperature=self.settings.generation_temperature,
                     do_sample=False,
                     repetition_penalty=1.1,
+                    return_full_text=False,
                 )
 
                 self._active_generation_model_name = model_name
@@ -804,7 +805,7 @@ Transcript excerpt:
             payload = _extract_json_object(raw)
         except Exception as exc:  # pragma: no cover - model invocation failure
             logger.warning("Study material generation failed: %s", exc)
-            payload = {}
+            return [{"question": f"Generation Failed", "answer": str(exc)}], []
 
         flashcards: list[dict[str, str]] = []
         for item in payload.get("flashcards", []):
@@ -839,7 +840,7 @@ Transcript excerpt:
             )
 
         if not flashcards and not quiz_questions:
-            return self._fallback_study_materials(transcript_text, summary_text, concepts)
+            return [{"question": "LLM Parsing Failed", "answer": f"Raw output: {raw[:200]}..."}], []
 
         return flashcards[:10], quiz_questions[:5]
 
