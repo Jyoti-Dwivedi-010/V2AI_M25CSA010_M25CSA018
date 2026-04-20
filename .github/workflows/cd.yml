@@ -2,6 +2,12 @@ name: CD
 
 on:
   workflow_dispatch:
+    inputs:
+      run_upload_smoke:
+        description: "Run upload/query smoke test after deploy (slower)"
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -40,18 +46,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push GPU API image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.api.gpu
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/v2ai-api-gpu:latest
-            ghcr.io/${{ github.repository_owner }}/v2ai-api-gpu:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Build and push UI image
         uses: docker/build-push-action@v6
         with:
@@ -73,19 +67,122 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy via SSH to GPU server
+      - name: Deploy via SSH to CPU server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            cd ~/v2ai || git clone https://github.com/${{ github.repository }}.git ~/v2ai && cd ~/v2ai
-            git pull origin main
-            cp .env.server-docker .env
-            # Use GPU profile — GPU-1 only
-            docker-compose --profile gpu pull api-gpu || true
-            docker-compose up -d postgres minio mlflow prometheus grafana
-            sleep 10
-            docker-compose --profile gpu up -d api-gpu ui
-            docker-compose ps
+            set -euo pipefail
+
+            if [ ! -d ~/v2ai/.git ]; then
+              git clone https://github.com/${{ github.repository }}.git ~/v2ai
+            fi
+
+            cd ~/v2ai
+            git fetch origin main
+            git reset --hard origin/main
+
+            if [ -f .env.server-docker ]; then
+              cp .env.server-docker .env
+            elif [ -f .env.example ]; then
+              cp .env.example .env
+            fi
+
+            if grep -q '^API_BASE_URL=' .env; then
+              sed -i 's|^API_BASE_URL=.*|API_BASE_URL=http://api:8000|' .env
+            else
+              echo 'API_BASE_URL=http://api:8000' >> .env
+            fi
+
+            if grep -q '^USE_GPU=' .env; then
+              sed -i 's|^USE_GPU=.*|USE_GPU=false|' .env
+            else
+              echo 'USE_GPU=false' >> .env
+            fi
+
+            mkdir -p artifacts/uploads artifacts/transcripts artifacts/vectorstore artifacts/monitoring artifacts/reports artifacts/mlflow artifacts/postgres artifacts/minio artifacts/grafana artifacts/prometheus
+
+            docker compose up -d postgres minio mlflow prometheus grafana
+            docker compose up -d api ui
+            docker compose ps
+
+  smoke-tests:
+    needs: deploy-to-server
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SERVER_HOST != '' }}
+
+    steps:
+      - name: Wait and verify core endpoints
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          set -euo pipefail
+
+          check() {
+            local url="$1"
+            local expected="$2"
+            local tries=20
+            local sleep_s=15
+
+            for i in $(seq 1 "$tries"); do
+              body="$(curl -fsS "$url" || true)"
+              if echo "$body" | grep -qi "$expected"; then
+                echo "PASS: $url"
+                return 0
+              fi
+              echo "Waiting for $url ($i/$tries)..."
+              sleep "$sleep_s"
+            done
+
+            echo "FAIL: $url"
+            exit 1
+          }
+
+          check "http://${SERVER_HOST}:8000/health" "ok"
+          check "http://${SERVER_HOST}:8501/_stcore/health" "ok"
+          check "http://${SERVER_HOST}:9090/-/healthy" "healthy"
+          check "http://${SERVER_HOST}:3000/api/health" "ok"
+
+          for i in $(seq 1 20); do
+            if curl -fsS "http://${SERVER_HOST}:9000/minio/health/live" >/dev/null; then
+              echo "PASS: http://${SERVER_HOST}:9000/minio/health/live"
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "FAIL: http://${SERVER_HOST}:9000/minio/health/live"
+              exit 1
+            fi
+            echo "Waiting for MinIO health ("$i"/20)..."
+            sleep 15
+          done
+
+      - name: Verify model-info is CPU
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          set -euo pipefail
+          payload="$(curl -fsS "http://${SERVER_HOST}:8000/model-info")"
+          echo "$payload"
+          echo "$payload" | jq -e '.use_gpu == false' >/dev/null
+
+      - name: Optional upload and query smoke test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_upload_smoke }}
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          set -euo pipefail
+
+          upload_payload="$(curl -fsS -X POST \
+            -F "file=@artifacts/sample_lecture/test_lecture_v2ai.mp4" \
+            -F "title=CD Upload Smoke" \
+            "http://${SERVER_HOST}:8000/upload-video")"
+
+          echo "$upload_payload" | jq -e '.session_id and (.summary | length > 0) and (.flashcards | length > 0) and (.quiz_questions | length > 0)' >/dev/null
+          session_id="$(echo "$upload_payload" | jq -r '.session_id')"
+
+          query_payload="$(jq -cn --arg q 'Give key lecture points in brief.' --arg s "$session_id" '{question:$q,session_id:$s}')"
+          query_response="$(curl -fsS -H 'Content-Type: application/json' -d "$query_payload" "http://${SERVER_HOST}:8000/query")"
+
+          echo "$query_response" | jq -e '(.answer | length > 0) and (.sources | length >= 1)' >/dev/null
