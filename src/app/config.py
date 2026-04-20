@@ -59,8 +59,6 @@ class Settings:
     concepts_top_k: int
     generation_max_tokens: int
     generation_temperature: float
-    hf_token: str
-    groq_api_key: str
 
 
 @lru_cache(maxsize=1)
@@ -88,10 +86,10 @@ def load_settings() -> Settings:
     request_log_path = _resolve_project_path(
         project_root, os.getenv("REQUEST_LOG_PATH", "artifacts/monitoring/request_logs.jsonl")
     )
-    generation_model_default = os.getenv("HF_GENERATION_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    generation_model_default = os.getenv("HF_GENERATION_MODEL", "google/flan-t5-base")
     generation_model_cpu = os.getenv(
         "HF_GENERATION_MODEL_CPU",
-        "Qwen/Qwen2.5-0.5B-Instruct",
+        "google/flan-t5-small",
     )
     generation_model_gpu = os.getenv(
         "HF_GENERATION_MODEL_GPU",
@@ -142,6 +140,4 @@ def load_settings() -> Settings:
         concepts_top_k=int(os.getenv("CONCEPTS_TOP_K", "12")),
         generation_max_tokens=int(os.getenv("GENERATION_MAX_TOKENS", "256")),
         generation_temperature=float(os.getenv("GENERATION_TEMPERATURE", "0.2")),
-        hf_token=os.getenv("HF_TOKEN", ""),
-        groq_api_key=os.getenv("GROQ_API_KEY", ""),
     )

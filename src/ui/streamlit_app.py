@@ -175,56 +175,18 @@ html, body, [data-testid="stAppViewContainer"] {
   color: var(--accent);
 }
 
-/* ── 3D Flashcard ──────────────────────────────────────────── */
+/* ── Flashcard ──────────────────────────────────────────── */
 .flashcard {
-  background: transparent;
-  perspective: 1000px;
-  height: 160px;
-  margin: 0.5rem 0;
-}
-.flashcard-inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  text-align: center;
-  transition: transform 0.6s cubic-bezier(0.4, 0.0, 0.2, 1);
-  transform-style: preserve-3d;
-  cursor: pointer;
-}
-.flashcard:hover .flashcard-inner {
-  transform: rotateY(180deg);
-}
-.flashcard-front, .flashcard-back {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
-  border-radius: 12px;
-  padding: 1.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-}
-.flashcard-front {
   background: rgba(245,158,11,0.06);
   border: 1px solid rgba(245,158,11,0.20);
+  border-radius: 12px;
+  padding: 0.9rem 1.1rem;
+  margin: 0.5rem 0;
+  transition: transform 0.2s ease;
 }
-.flashcard-front .fc-q {
-  font-weight: 600;
-  color: var(--gold);
-  font-size: 1rem;
-}
-.flashcard-back {
-  background: rgba(16,185,129,0.08);
-  border: 1px solid rgba(16,185,129,0.30);
-  color: #e2e8f0;
-  transform: rotateY(180deg);
-  font-size: 0.95rem;
-  line-height: 1.5;
-  overflow-y: auto;
-}
+.flashcard:hover { transform: translateY(-2px); }
+.flashcard .fc-q { font-weight: 600; color: var(--gold); font-size: 0.9rem; margin-bottom: 0.4rem; }
+.flashcard .fc-a { color: var(--text-dim); font-size: 0.88rem; }
 
 /* ── Quiz card ──────────────────────────────────────────── */
 .quiz-card {
@@ -581,30 +543,13 @@ with upload_col:
 with session_col:
     if st.session_state["session_id"]:
         # Summary
-        import json
-        raw_summary = st.session_state.get("summary", "")
-        explained_text = ""
-        summarized_text = raw_summary
-        
-        try:
-            summary_data = json.loads(raw_summary)
-            if isinstance(summary_data, dict) and "explained" in summary_data:
-                explained_text = summary_data.get("explained", "")
-                summarized_text = summary_data.get("summarized", "")
-        except:
-            pass
-
-        st.markdown("<div class='v-card'>", unsafe_allow_html=True)
-        tab_exp, tab_sum = st.tabs(["💡 AI Explained", "📝 AI Summarized"])
-        with tab_exp:
-            if explained_text:
-                st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{explained_text}</p>", unsafe_allow_html=True)
-            else:
-                st.info("AI Explained is not available. Please ensure Groq SDK is installed and API key is set for DeepSeek capabilities.")
-        with tab_sum:
-            st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>", unsafe_allow_html=True)
-            
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='v-card'>"
+            f"<div class='section-title'>📄 AI Summary</div>"
+            f"<p style='line-height:1.7;color:#cbd5e1'>{st.session_state['summary']}</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
         # Key Concepts
         if st.session_state["concepts"]:
@@ -641,18 +586,10 @@ if st.session_state["session_id"]:
             for i, card in enumerate(flashcards):
                 with cols[i % 2]:
                     st.markdown(
-                        f'''
-                        <div class="flashcard">
-                          <div class="flashcard-inner">
-                            <div class="flashcard-front">
-                              <div class="fc-q">Q{i+1}. {card["question"]}</div>
-                            </div>
-                            <div class="flashcard-back">
-                              <div class="fc-a">{card["answer"]}</div>
-                            </div>
-                          </div>
-                        </div>
-                        ''',
+                        f"<div class='flashcard'>"
+                        f"<div class='fc-q'>Q{i+1}. {card['question']}</div>"
+                        f"<div class='fc-a'>→ {card['answer']}</div>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
         else:
