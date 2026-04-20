@@ -61,6 +61,7 @@ class Settings:
     generation_temperature: float
     hf_token: str
     groq_api_key: str
+    groq_model: str
 
 
 @lru_cache(maxsize=1)
@@ -144,4 +145,5 @@ def load_settings() -> Settings:
         generation_temperature=float(os.getenv("GENERATION_TEMPERATURE", "0.2")),
         hf_token=os.getenv("HF_TOKEN", ""),
         groq_api_key=os.getenv("GROQ_API_KEY", ""),
+        groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     )

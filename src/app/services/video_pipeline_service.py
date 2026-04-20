@@ -791,7 +791,7 @@ class V2AIPipelineService:
 
         client = GroqClient(api_key=self.settings.groq_api_key)
         response = client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=self.settings.groq_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
