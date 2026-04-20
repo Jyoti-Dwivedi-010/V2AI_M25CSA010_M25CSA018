@@ -955,6 +955,11 @@ Transcript Chunk to analyze:
             "no_warnings": True,
             "extractor_args": {"youtube": ["player_client=android,web"]},
         }
+        
+        cookie_path = Path("/app/cookies.txt")
+        if cookie_path.exists():
+            ydl_opts["cookiefile"] = str(cookie_path)
+            
         if ffmpeg_path:
             ydl_opts["ffmpeg_location"] = ffmpeg_path
 
