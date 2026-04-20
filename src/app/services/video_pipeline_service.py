@@ -778,71 +778,87 @@ You must reply with strictly valid JSON matching this schema exactly, and nothin
     ]
 }}
 
+Requirements:
+- Generate exactly 2 flashcards from this specific chunk.
+- Generate exactly 1 multiple-choice quiz question from this specific chunk.
+
 Summary:
 {summary}
 
 Concepts:
 {concepts}
 
-Transcript excerpt:
+Transcript Chunk:
 {transcript_excerpt}
 """.strip()
         )
 
-        transcript_excerpt = _extractive_summary(transcript_text, max_sentences=50, max_chars=8000)
         chain = prompt | self.llm | StrOutputParser()
 
-        try:
-            raw = str(
-                chain.invoke(
-                    {
-                        "summary": summary_text,
-                        "concepts": ", ".join(concepts),
-                        "transcript_excerpt": transcript_excerpt,
-                    }
-                )
-            ).strip()
-            payload = _extract_json_object(raw)
-        except Exception as exc:  # pragma: no cover - model invocation failure
-            logger.warning("Study material generation failed: %s", exc)
-            return [{"question": f"Generation Failed", "answer": str(exc)}], []
+        words = transcript_text.split()
+        chunk_size = max(len(words) // 3, 1)
+        chunks = [
+            " ".join(words[i : i + chunk_size])
+            for i in range(0, len(words), chunk_size)
+        ][:3]
 
-        flashcards: list[dict[str, str]] = []
-        for item in payload.get("flashcards", []):
-            question = str(item.get("question", "")).strip()
-            answer = str(item.get("answer", "")).strip()
-            if question and answer:
-                flashcards.append({"question": question, "answer": answer})
+        all_flashcards: list[dict[str, str]] = []
+        all_quiz_questions: list[dict[str, Any]] = []
+        last_error = ""
 
-        quiz_questions: list[dict[str, Any]] = []
-        for item in payload.get("quiz_questions", []):
-            question = str(item.get("question", "")).strip()
-            options = [
-                str(option).strip()
-                for option in item.get("options", [])
-                if str(option).strip()
-            ]
-            correct = str(item.get("correct_answer", "")).strip()
+        for chunk in chunks:
+            try:
+                raw = str(
+                    chain.invoke(
+                        {
+                            "summary": summary_text,
+                            "concepts": ", ".join(concepts),
+                            "transcript_excerpt": chunk[:5000],
+                        }
+                    )
+                ).strip()
+                payload = _extract_json_object(raw)
+                
+                for item in payload.get("flashcards", []):
+                    question = str(item.get("question", "")).strip()
+                    answer = str(item.get("answer", "")).strip()
+                    if question and answer:
+                        all_flashcards.append({"question": question, "answer": answer})
 
-            if not question or not correct:
+                for item in payload.get("quiz_questions", []):
+                    question = str(item.get("question", "")).strip()
+                    options = [str(opt).strip() for opt in item.get("options", []) if str(opt).strip()]
+                    correct = str(item.get("correct_answer", "")).strip()
+
+                    if not question or not correct:
+                        continue
+                    if correct not in options:
+                        options = options[:3] + [correct]
+                    if len(options) >= 2:
+                        all_quiz_questions.append({
+                            "question": question,
+                            "options": options[:4],
+                            "correct_answer": correct,
+                        })
+
+            except Exception as exc:
+                logger.warning("Chunk generation failed: %s", exc)
+                last_error = str(exc)
                 continue
-            if correct not in options:
-                options = options[:3] + [correct]
-            if len(options) < 2:
-                continue
 
-            quiz_questions.append(
-                {
-                    "question": question,
-                    "options": options[:4],
-                    "correct_answer": correct,
-                }
-            )
+        if not all_flashcards and not all_quiz_questions:
+            return [{"question": "LLM Parsing Failed", "answer": f"Generation Error: {last_error}"}], []
 
-        if not flashcards and not quiz_questions:
-            return [{"question": "LLM Parsing Failed", "answer": f"Raw output: {raw[:200]}..."}], []
+        # Deduplicate flashcards by exact question match
+        unique_flashcards = []
+        seen_q = set()
+        for f in all_flashcards:
+            q = f["question"].lower()
+            if q not in seen_q:
+                seen_q.add(q)
+                unique_flashcards.append(f)
 
-        return flashcards[:10], quiz_questions[:5]
+        return unique_flashcards[:10], all_quiz_questions[:5]
 
     def _segments_to_documents(
         self,
