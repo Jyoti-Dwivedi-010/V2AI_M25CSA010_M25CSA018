@@ -5,6 +5,7 @@ python-multipart>=0.0.9,<1.0
 langchain>=0.3,<0.4
 langchain-community>=0.3,<0.4
 langchain-huggingface>=0.1,<0.2
+groq>=0.11,<1.0
 transformers>=4.45,<5.0
 sentence-transformers>=3.1,<4.0
 faiss-cpu>=1.8,<2.0

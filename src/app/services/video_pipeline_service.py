@@ -36,6 +36,11 @@ from app.db.session import SessionLocal, init_database
 from app.storage.minio_store import MinIOArtifactStore
 from app.tracking.mlflow_tracker import MLflowTracker
 
+try:
+    from groq import Groq as GroqClient
+except ImportError:  # pragma: no cover
+    GroqClient = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -735,12 +740,42 @@ class V2AIPipelineService:
         self.tracker.start_run("inference")
         return answer or "I cannot find this in the lecture transcript."
 
+    def _call_groq(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Call Groq API with llama-3.3-70b-versatile. Returns raw text."""
+        if GroqClient is None or not self.settings.groq_api_key:
+            raise RuntimeError("Groq SDK not installed or GROQ_API_KEY not set")
+        client = GroqClient(api_key=self.settings.groq_api_key)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
+
+    def _has_groq(self) -> bool:
+        return bool(GroqClient is not None and self.settings.groq_api_key)
+
     def _generate_study_materials(
         self,
         transcript_text: str,
         summary_text: str,
         concepts: list[str],
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+        # --- Groq path (preferred) ---
+        if self._has_groq():
+            return self._generate_study_materials_groq(transcript_text, summary_text, concepts)
+
+        # --- Local LLM fallback ---
         if self._disable_neural_generation or self.llm is None:
             return self._fallback_study_materials(transcript_text, summary_text, concepts)
 
@@ -847,6 +882,97 @@ Transcript Chunk to analyze:
                 unique_flashcards.append(f)
 
         return unique_flashcards[:10], all_quiz_questions[:5]
+
+    def _generate_study_materials_groq(
+        self,
+        transcript_text: str,
+        summary_text: str,
+        concepts: list[str],
+    ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+        """Map-Reduce flashcard generation powered by Groq Llama-3.3-70B."""
+        system_prompt = (
+            "You are a rigorous university professor creating exam-level study materials. "
+            "You must respond with ONLY valid JSON — no markdown, no explanation, no preamble. "
+            "Generate deeply conceptual questions that require synthesis, not mere recall. "
+            "Never ask 'What is X?' Instead ask 'Why does X outperform Y in scenario Z?' "
+            "Distractors for multiple choice must be highly plausible and wrong for a subtle reason."
+        )
+
+        schema = (
+            '{\n'
+            '  "flashcards": [\n'
+            '    {"question": "Deep conceptual question?", "answer": "Thorough explanation that builds understanding."},\n'
+            '    {"question": "Another synthesis question?", "answer": "Thorough answer."}\n'
+            '  ],\n'
+            '  "quiz_questions": [\n'
+            '    {\n'
+            '      "question": "Challenging MCQ?",\n'
+            '      "options": ["Plausible wrong A", "Plausible wrong B", "Plausible wrong C", "Correct Answer"],\n'
+            '      "correct_answer": "Correct Answer"\n'
+            '    }\n'
+            '  ]\n'
+            '}'
+        )
+
+        words = transcript_text.split()
+        chunk_size = max(len(words) // 3, 300)
+        chunks = [" ".join(words[i: i + chunk_size]) for i in range(0, len(words), chunk_size)][:3]
+
+        all_flashcards: list[dict[str, str]] = []
+        all_quiz_questions: list[dict[str, Any]] = []
+        last_error = ""
+
+        for i, chunk in enumerate(chunks, 1):
+            user_message = (
+                f"Overall lecture summary:\n{summary_text}\n\n"
+                f"Key concepts: {', '.join(concepts)}\n\n"
+                f"Transcript chunk {i} of {len(chunks)}:\n{chunk[:6000]}\n\n"
+                f"Generate exactly 3 flashcards and 2 quiz questions from this chunk only.\n"
+                f"Reply with ONLY this JSON structure:\n{schema}"
+            )
+            try:
+                raw = self._call_groq(system_prompt, user_message, temperature=0.4, max_tokens=2048)
+                payload = _extract_json_object(raw)
+
+                for item in payload.get("flashcards", []):
+                    q = str(item.get("question", "")).strip()
+                    a = str(item.get("answer", "")).strip()
+                    if q and a:
+                        all_flashcards.append({"question": q, "answer": a})
+
+                for item in payload.get("quiz_questions", []):
+                    q = str(item.get("question", "")).strip()
+                    opts = [str(o).strip() for o in item.get("options", []) if str(o).strip()]
+                    correct = str(item.get("correct_answer", "")).strip()
+                    if not q or not correct:
+                        continue
+                    if correct not in opts:
+                        opts = opts[:3] + [correct]
+                    if len(opts) >= 2:
+                        all_quiz_questions.append({
+                            "question": q,
+                            "options": opts[:4],
+                            "correct_answer": correct,
+                        })
+
+            except Exception as exc:
+                logger.warning("Groq chunk %d generation failed: %s", i, exc)
+                last_error = str(exc)
+
+        if not all_flashcards and not all_quiz_questions:
+            return [{"question": "Groq Generation Error", "answer": last_error}], []
+
+        # Deduplicate
+        unique_fc: list[dict[str, str]] = []
+        seen_q: set[str] = set()
+        for f in all_flashcards:
+            key = f["question"].lower()
+            if key not in seen_q:
+                seen_q.add(key)
+                unique_fc.append(f)
+
+        return unique_fc[:10], all_quiz_questions[:5]
+
 
     def _segments_to_documents(
         self,
@@ -1202,7 +1328,25 @@ Answer:
 """.strip()
         )
 
-        if self._disable_neural_generation or self.llm is None:
+        if self._has_groq():
+            # Use Groq for significantly better contextual QA
+            try:
+                raw_answer = self._call_groq(
+                    system_prompt=(
+                        "You are a knowledgeable lecture assistant. "
+                        "Answer the student's question using ONLY the provided transcript context. "
+                        "Give a clear, concise, accurate answer in 3-5 sentences. "
+                        "If the answer is not in the context, say 'I cannot find this in the lecture transcript.'"
+                    ),
+                    user_message=f"Transcript Context:\n{context}\n\nQuestion: {question}",
+                    temperature=0.2,
+                    max_tokens=512,
+                )
+                answer = _clean_generated_answer(raw_answer) or "I cannot find this in the lecture transcript."
+            except Exception as exc:
+                logger.warning("Groq QA failed, falling back: %s", exc)
+                answer = self._fallback_answer_from_docs(question, docs)
+        elif self._disable_neural_generation or self.llm is None:
             answer = self._fallback_answer_from_docs(question, docs)
         else:
             chain = prompt | self.llm | StrOutputParser()
