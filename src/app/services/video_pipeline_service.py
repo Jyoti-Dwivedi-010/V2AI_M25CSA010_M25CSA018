@@ -433,15 +433,16 @@ class V2AIPipelineService:
                     model=model,
                     tokenizer=tokenizer,
                     device=0 if self._use_cuda() else -1,
-                    max_new_tokens=min(self.settings.generation_max_tokens, 512),
+                    max_new_tokens=min(self.settings.generation_max_tokens, 1500),  # Increased for massive JSON context
                     temperature=self.settings.generation_temperature,
                     do_sample=False,
                     repetition_penalty=1.1,
+                    return_full_text=False,
                 )
 
                 self._active_generation_model_name = model_name
                 self._disable_neural_generation = False
-                return HuggingFacePipeline(pipeline=generator, pipeline_kwargs={"return_full_text": False})
+                return HuggingFacePipeline(pipeline=generator)
             except Exception as exc:  # pragma: no cover - model loading path
                 last_error = exc
                 logger.warning(
