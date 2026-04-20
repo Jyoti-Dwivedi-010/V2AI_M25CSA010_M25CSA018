@@ -527,21 +527,49 @@ class V2AIPipelineService:
             return None
 
     def _summarize_transcript(self, transcript_text: str) -> str:
+        # Step 1: In-depth explanation via Groq/DeepSeek
+        explained = ""
+        if self._has_groq():
+            try:
+                system_prompt = (
+                    "You are an expert educator. Write a highly detailed, comprehensive summary "
+                    "of the provided lecture transcript. Capture all key concepts, definitions, "
+                    "nuances, and conclusions. Do not omit important details."
+                )
+                raw_explained = self._call_groq(
+                    system_prompt, 
+                    transcript_text[:15000],  # Give it a massive context window
+                    temperature=0.3, 
+                    max_tokens=2048
+                )
+                import re
+                explained = re.sub(r'<think>.*?</think>', '', raw_explained, flags=re.DOTALL).strip()
+            except Exception as exc:
+                logger.warning("Groq detailed summary failed: %s", exc)
+
+        # Step 2: Crisp summary via BART
+        crisp = ""
+        # If transcript is very short, just use it directly
         if len(transcript_text.split()) < 40:
-            return transcript_text
-
-        summarizer = self._get_summarizer()
-        if summarizer is None:
-            return _extractive_summary(transcript_text)
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2200,
-            chunk_overlap=250,
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-        chunks = splitter.split_text(transcript_text)
-        if not chunks:
-            return transcript_text
+            crisp = transcript_text
+        else:
+            summarizer = self._get_summarizer()
+            # If we successfully generated an explanation, we can summarize THAT to make it even crisper
+            # Otherwise, summarize the original transcript
+            source_text = explained if explained and len(explained.split()) > 100 else transcript_text
+            
+            if summarizer is None:
+                crisp = _extractive_summary(source_text)
+            else:
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=2200,
+                    chunk_overlap=250,
+                    separators=["\n\n", "\n", ". ", " ", ""],
+                )
+                chunks = splitter.split_text(source_text)
+                if not chunks:
+                    crisp = source_text
+                else:
 
         partial_summaries: list[str] = []
         for chunk in chunks[:8]:
@@ -609,7 +637,13 @@ class V2AIPipelineService:
                         max_chars=500,
                     )
 
-        return _extractive_summary(merged, max_sentences=5, max_chars=700)
+        crisp = _extractive_summary(merged, max_sentences=5, max_chars=700)
+        
+        import json
+        return json.dumps({
+            "explained": explained,
+            "summarized": crisp
+        })
 
     def _extract_concepts(self, transcript_text: str) -> list[str]:
         candidates = _simple_keywords(transcript_text, top_k=40)
