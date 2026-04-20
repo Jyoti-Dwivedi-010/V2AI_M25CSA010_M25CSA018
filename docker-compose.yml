@@ -132,6 +132,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       WANDB_PROJECT: v2ai-rag
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
     ports:
       - "8000:8000"
     depends_on:
@@ -230,6 +231,7 @@ services:
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       WANDB_PROJECT: v2ai-rag
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
     ports:
       - "8001:8000"
     depends_on:
