@@ -570,74 +570,73 @@ class V2AIPipelineService:
                 if not chunks:
                     crisp = source_text
                 else:
+                    partial_summaries: list[str] = []
+                    for chunk in chunks[:8]:
+                        if self._disable_neural_summarizer:
+                            partial_summaries.append(
+                                _extractive_summary(chunk, max_sentences=2, max_chars=220)
+                            )
+                            continue
 
-        partial_summaries: list[str] = []
-        for chunk in chunks[:8]:
-            if self._disable_neural_summarizer:
-                partial_summaries.append(
-                    _extractive_summary(chunk, max_sentences=2, max_chars=220)
-                )
-                continue
+                        chunk_word_count = max(len(chunk.split()), 1)
+                        max_length = min(140, max(60, int(chunk_word_count * 0.7)))
+                        min_length = min(45, max(25, int(max_length * 0.45)))
+                        if min_length >= max_length:
+                            min_length = max(20, max_length - 20)
 
-            chunk_word_count = max(len(chunk.split()), 1)
-            max_length = min(140, max(60, int(chunk_word_count * 0.7)))
-            min_length = min(45, max(25, int(max_length * 0.45)))
-            if min_length >= max_length:
-                min_length = max(20, max_length - 20)
+                        try:
+                            summary_part = summarizer(
+                                chunk,
+                                max_length=max_length,
+                                min_length=min_length,
+                                do_sample=False,
+                            )[0]["summary_text"]
+                        except Exception as exc:  # pragma: no cover - runtime model path
+                            self._disable_neural_summarizer = True
+                            logger.warning(
+                                "Neural summarization failed during chunking. "
+                                "Using extractive fallback: %s",
+                                exc,
+                            )
+                            summary_part = _extractive_summary(
+                                chunk,
+                                max_sentences=2,
+                                max_chars=220,
+                            )
+                        partial_summaries.append(summary_part)
 
-            try:
-                summary_part = summarizer(
-                    chunk,
-                    max_length=max_length,
-                    min_length=min_length,
-                    do_sample=False,
-                )[0]["summary_text"]
-            except Exception as exc:  # pragma: no cover - runtime model path
-                self._disable_neural_summarizer = True
-                logger.warning(
-                    "Neural summarization failed during chunking. "
-                    "Using extractive fallback: %s",
-                    exc,
-                )
-                summary_part = _extractive_summary(
-                    chunk,
-                    max_sentences=2,
-                    max_chars=220,
-                )
-            partial_summaries.append(summary_part)
+                    merged = " ".join(partial_summaries)
+                    if len(partial_summaries) > 1:
+                        if self._disable_neural_summarizer:
+                            merged = _extractive_summary(merged, max_sentences=4, max_chars=500)
+                        else:
+                            merged_word_count = max(len(merged.split()), 1)
+                            merged_max_length = min(170, max(70, int(merged_word_count * 0.65)))
+                            merged_min_length = min(60, max(30, int(merged_max_length * 0.45)))
+                            if merged_min_length >= merged_max_length:
+                                merged_min_length = max(25, merged_max_length - 25)
 
-        merged = " ".join(partial_summaries)
-        if len(partial_summaries) > 1:
-            if self._disable_neural_summarizer:
-                merged = _extractive_summary(merged, max_sentences=4, max_chars=500)
-            else:
-                merged_word_count = max(len(merged.split()), 1)
-                merged_max_length = min(170, max(70, int(merged_word_count * 0.65)))
-                merged_min_length = min(60, max(30, int(merged_max_length * 0.45)))
-                if merged_min_length >= merged_max_length:
-                    merged_min_length = max(25, merged_max_length - 25)
+                            try:
+                                merged = summarizer(
+                                    merged,
+                                    max_length=merged_max_length,
+                                    min_length=merged_min_length,
+                                    do_sample=False,
+                                )[0]["summary_text"]
+                            except Exception as exc:  # pragma: no cover - runtime model path
+                                self._disable_neural_summarizer = True
+                                logger.warning(
+                                    "Neural summarization failed during merge. "
+                                    "Using extractive fallback: %s",
+                                    exc,
+                                )
+                                merged = _extractive_summary(
+                                    merged,
+                                    max_sentences=4,
+                                    max_chars=500,
+                                )
 
-                try:
-                    merged = summarizer(
-                        merged,
-                        max_length=merged_max_length,
-                        min_length=merged_min_length,
-                        do_sample=False,
-                    )[0]["summary_text"]
-                except Exception as exc:  # pragma: no cover - runtime model path
-                    self._disable_neural_summarizer = True
-                    logger.warning(
-                        "Neural summarization failed during merge. "
-                        "Using extractive fallback: %s",
-                        exc,
-                    )
-                    merged = _extractive_summary(
-                        merged,
-                        max_sentences=4,
-                        max_chars=500,
-                    )
-
-        crisp = _extractive_summary(merged, max_sentences=5, max_chars=700)
+                    crisp = _extractive_summary(merged, max_sentences=5, max_chars=700)
         
         import json
         return json.dumps({
