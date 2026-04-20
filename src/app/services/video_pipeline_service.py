@@ -34,6 +34,7 @@ from app.config import Settings, load_settings
 from app.db.models import LectureSession, QueryLog
 from app.db.session import SessionLocal, init_database
 from app.storage.minio_store import MinIOArtifactStore
+from app.tracking.mlflow_tracker import MLflowTracker
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +374,8 @@ class V2AIPipelineService:
         self.settings = settings or load_settings()
         self._ensure_paths()
         init_database()
+        
+        self.tracker = MLflowTracker()
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=self.settings.hf_embedding_model,
@@ -728,6 +731,7 @@ class V2AIPipelineService:
 
         source_text = " ".join(selected_sentences) if selected_sentences else merged
         answer = _extractive_summary(source_text, max_sentences=4, max_chars=750)
+        self.tracker.start_run("inference")
         return answer or "I cannot find this in the lecture transcript."
 
     def _generate_study_materials(
@@ -784,7 +788,7 @@ Transcript excerpt:
 """.strip()
         )
 
-        transcript_excerpt = transcript_text[:8000]
+        transcript_excerpt = _extractive_summary(transcript_text, max_sentences=50, max_chars=8000)
         chain = prompt | self.llm | StrOutputParser()
 
         try:
@@ -1094,6 +1098,14 @@ Transcript excerpt:
             quiz_questions=quiz_questions,
             duration_seconds=duration_seconds,
             metadata_json=metadata,
+        )
+
+        self.tracker.log_pipeline_session(
+            session_id=session_id,
+            transcription_meta={"duration_seconds": duration_seconds, "segment_count": len(segments), "language": metadata.get("language")},
+            summarization_meta={"summary_length": len(summary_text)},
+            indexing_meta={"vector_store_chunks": len(segments)},
+            model_params={"generation_model": self._active_generation_model_name}
         )
 
         return {
