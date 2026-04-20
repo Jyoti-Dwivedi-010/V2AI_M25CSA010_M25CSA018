@@ -177,27 +177,27 @@ html, body, [data-testid="stAppViewContainer"] {
 }
 
 /* ── Flashcard (flip) ───────────────────────────────────── */
-.flashcard-flip {
+.v2-flipcard {
     background: transparent;
     width: 100%;
     min-height: 210px;
     perspective: 1200px;
     margin: 0.5rem 0;
 }
-.flashcard-inner {
+.v2-flipcard-inner {
     position: relative;
     width: 100%;
     min-height: 210px;
-    transition: transform 0.65s cubic-bezier(.2,.7,.2,1);
+    transition: transform 0.7s cubic-bezier(.2,.7,.2,1);
     transform-style: preserve-3d;
 }
-.flashcard-flip:hover .flashcard-inner,
-.flashcard-flip:active .flashcard-inner,
-.flashcard-flip:focus-within .flashcard-inner {
+.v2-flipcard:hover .v2-flipcard-inner,
+.v2-flipcard:active .v2-flipcard-inner,
+.v2-flipcard:focus-within .v2-flipcard-inner {
     transform: rotateY(180deg);
 }
-.flashcard-front,
-.flashcard-back {
+.v2-flipcard-front,
+.v2-flipcard-back {
     position: absolute;
     inset: 0;
     border-radius: 14px;
@@ -207,10 +207,10 @@ html, body, [data-testid="stAppViewContainer"] {
     -webkit-backface-visibility: hidden;
     overflow: hidden;
 }
-.flashcard-front {
+.v2-flipcard-front {
     background: linear-gradient(145deg, rgba(245,158,11,0.16), rgba(245,158,11,0.06));
 }
-.flashcard-back {
+.v2-flipcard-back {
     background: linear-gradient(145deg, rgba(16,185,129,0.15), rgba(16,185,129,0.06));
     transform: rotateY(180deg);
     border-color: rgba(16,185,129,0.35);
@@ -229,11 +229,11 @@ html, body, [data-testid="stAppViewContainer"] {
     font-size: 0.9rem;
     line-height: 1.55;
 }
-.flashcard-front .fc-text {
+.v2-flipcard-front .fc-text {
     color: #fef3c7;
     font-weight: 600;
 }
-.flashcard-back .fc-text { color: #d1fae5; }
+.v2-flipcard-back .fc-text { color: #d1fae5; }
 .fc-hint {
     position: absolute;
     right: 10px;
@@ -243,8 +243,8 @@ html, body, [data-testid="stAppViewContainer"] {
     font-family: var(--mono);
 }
 @media (max-width: 900px) {
-    .flashcard-flip,
-    .flashcard-inner {
+    .v2-flipcard,
+    .v2-flipcard-inner {
         min-height: 190px;
     }
 }
@@ -675,14 +675,14 @@ if st.session_state["session_id"]:
             for i, card in enumerate(flashcards):
                 with cols[i % 2]:
                     st.markdown(
-                        f"<div class='flashcard-flip'>"
-                        f"  <div class='flashcard-inner'>"
-                        f"    <div class='flashcard-front'>"
+                        f"<div class='v2-flipcard'>"
+                        f"  <div class='v2-flipcard-inner'>"
+                        f"    <div class='v2-flipcard-front'>"
                         f"      <div class='fc-face-title q'>Flashcard {i+1} · Question</div>"
                         f"      <div class='fc-text'>{card['question']}</div>"
                         f"      <div class='fc-hint'>Hover to reveal answer</div>"
                         f"    </div>"
-                        f"    <div class='flashcard-back'>"
+                        f"    <div class='v2-flipcard-back'>"
                         f"      <div class='fc-face-title a'>Flashcard {i+1} · Answer</div>"
                         f"      <div class='fc-text'>{card['answer']}</div>"
                         f"      <div class='fc-hint'>Hover again to flip back</div>"
