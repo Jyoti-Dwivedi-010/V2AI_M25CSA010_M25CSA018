@@ -61,11 +61,17 @@ jobs:
   deploy-to-server:
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: ${{ secrets.SERVER_HOST != '' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate deploy secrets
+        run: |
+          set -euo pipefail
+          [ -n "${{ secrets.SERVER_HOST }}" ]
+          [ -n "${{ secrets.SERVER_USER }}" ]
+          [ -n "${{ secrets.SERVER_PASSWORD }}" ]
 
       - name: Deploy via SSH to CPU server
         uses: appleboy/ssh-action@v1.0.3
@@ -111,7 +117,6 @@ jobs:
   smoke-tests:
     needs: deploy-to-server
     runs-on: ubuntu-latest
-    if: ${{ secrets.SERVER_HOST != '' }}
 
     steps:
       - name: Wait and verify core endpoints
