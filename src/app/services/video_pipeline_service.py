@@ -28,7 +28,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import desc, select
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 
 from app.config import Settings, load_settings
 from app.db.models import LectureSession, QueryLog
@@ -403,7 +403,7 @@ class V2AIPipelineService:
         candidates = [
             preferred,
             self.settings.hf_generation_model,
-            "google/flan-t5-small",
+            "Qwen/Qwen2.5-0.5B-Instruct",
         ]
 
         return _dedupe_preserving_order(candidates)
@@ -413,18 +413,27 @@ class V2AIPipelineService:
         for model_name in self._get_generation_model_candidates():
             try:
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+                config = AutoConfig.from_pretrained(model_name)
+                
+                if getattr(config, "is_encoder_decoder", False):
+                    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+                    task = "text2text-generation"
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        model_name, 
+                        torch_dtype=torch.float16 if self._use_cuda() else torch.float32
+                    )
+                    task = "text-generation"
 
                 generator = pipeline(
-                    task="text2text-generation",
+                    task=task,
                     model=model,
                     tokenizer=tokenizer,
                     device=0 if self._use_cuda() else -1,
-                    max_new_tokens=min(self.settings.generation_max_tokens, 160),
+                    max_new_tokens=min(self.settings.generation_max_tokens, 512),
                     temperature=self.settings.generation_temperature,
                     do_sample=False,
-                    repetition_penalty=1.2,
-                    no_repeat_ngram_size=3,
+                    repetition_penalty=1.1,
                 )
 
                 self._active_generation_model_name = model_name
@@ -732,26 +741,37 @@ class V2AIPipelineService:
 
         prompt = PromptTemplate.from_template(
             """
-Create concise study material from the lecture transcript context.
-Return strictly valid JSON with this schema:
+You are an expert pedagogical AI tutor. Analyze the following lecture transcript, summary, and extracted concepts to create high-quality, deep, and educational study materials. 
+Do NOT ask basic definition questions. Instead, ask conceptual questions that test deep understanding (e.g., "Why is X preferred over Y?", "How does X affect Y?").
+For multiple-choice questions, provide exactly one correct answer and three highly plausible but incorrect distractors.
+
+You must reply with strictly valid JSON matching this schema exactly, and nothing else. Do not wrap in markdown ```json blocks.
 {{
     "flashcards": [
-        {{"question": "...", "answer": "..."}}
+        {{"question": "Deep conceptual question 1?", "answer": "Detailed answer explaining the concept."}},
+        {{"question": "Deep conceptual question 2?", "answer": "Detailed answer explaining the concept."}},
+        {{"question": "Deep conceptual question 3?", "answer": "Detailed answer explaining the concept."}},
+        {{"question": "Deep conceptual question 4?", "answer": "Detailed answer explaining the concept."}},
+        {{"question": "Deep conceptual question 5?", "answer": "Detailed answer explaining the concept."}}
     ],
     "quiz_questions": [
         {{
-            "question": "...",
-            "options": ["...", "...", "...", "..."],
-            "correct_answer": "..."
+            "question": "Challenging multiple choice question 1?",
+            "options": ["Distractor A", "Distractor B", "Distractor C", "Correct Answer"],
+            "correct_answer": "Correct Answer"
+        }},
+        {{
+            "question": "Challenging multiple choice question 2?",
+            "options": ["Distractor A", "Correct Answer", "Distractor B", "Distractor C"],
+            "correct_answer": "Correct Answer"
+        }},
+        {{
+            "question": "Challenging multiple choice question 3?",
+            "options": ["Correct Answer", "Distractor A", "Distractor B", "Distractor C"],
+            "correct_answer": "Correct Answer"
         }}
     ]
 }}
-
-Requirements:
-- Generate 5 flashcards.
-- Generate 3 multiple-choice quiz questions.
-- Keep each item aligned with the lecture concepts.
-- Do not include markdown or explanation outside JSON.
 
 Summary:
 {summary}
@@ -814,10 +834,10 @@ Transcript excerpt:
                 }
             )
 
-        if len(flashcards) < 3 or len(quiz_questions) < 2:
+        if not flashcards and not quiz_questions:
             return self._fallback_study_materials(transcript_text, summary_text, concepts)
 
-        return flashcards[:5], quiz_questions[:3]
+        return flashcards[:10], quiz_questions[:5]
 
     def _segments_to_documents(
         self,
