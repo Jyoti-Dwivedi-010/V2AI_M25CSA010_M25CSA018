@@ -581,13 +581,31 @@ with upload_col:
 with session_col:
     if st.session_state["session_id"]:
         # Summary
-        st.markdown(
-            f"<div class='v-card'>"
-            f"<div class='section-title'>📄 AI Summary</div>"
-            f"<p style='line-height:1.7;color:#cbd5e1'>{st.session_state['summary']}</p>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        import json
+        raw_summary = st.session_state.get("summary", "")
+        explained_text = ""
+        summarized_text = raw_summary
+        
+        try:
+            summary_data = json.loads(raw_summary)
+            if isinstance(summary_data, dict) and "explained" in summary_data:
+                explained_text = summary_data.get("explained", "")
+                summarized_text = summary_data.get("summarized", "")
+        except:
+            pass
+
+        st.markdown("<div class='v-card'><div class='section-title'>📄 AI Summary</div>", unsafe_allow_html=True)
+        
+        if explained_text:
+            tab_exp, tab_sum = st.tabs(["💡 AI Explained", "📝 AI Summarized"])
+            with tab_exp:
+                st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{explained_text}</p>", unsafe_allow_html=True)
+            with tab_sum:
+                st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>", unsafe_allow_html=True)
+            
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # Key Concepts
         if st.session_state["concepts"]:
