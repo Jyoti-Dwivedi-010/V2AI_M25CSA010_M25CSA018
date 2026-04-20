@@ -594,15 +594,14 @@ with session_col:
         except:
             pass
 
-        st.markdown("<div class='v-card'><div class='section-title'>📄 AI Summary</div>", unsafe_allow_html=True)
-        
-        if explained_text:
-            tab_exp, tab_sum = st.tabs(["💡 AI Explained", "📝 AI Summarized"])
-            with tab_exp:
+        st.markdown("<div class='v-card'>", unsafe_allow_html=True)
+        tab_exp, tab_sum = st.tabs(["💡 AI Explained", "📝 AI Summarized"])
+        with tab_exp:
+            if explained_text:
                 st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{explained_text}</p>", unsafe_allow_html=True)
-            with tab_sum:
-                st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>", unsafe_allow_html=True)
-        else:
+            else:
+                st.info("AI Explained is not available. Please ensure Groq SDK is installed and API key is set for DeepSeek capabilities.")
+        with tab_sum:
             st.markdown(f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>", unsafe_allow_html=True)
             
         st.markdown("</div>", unsafe_allow_html=True)

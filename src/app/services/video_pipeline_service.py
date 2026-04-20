@@ -572,13 +572,17 @@ class V2AIPipelineService:
                 else:
                     partial_summaries: list[str] = []
                     for chunk in chunks[:8]:
+                        chunk_clean = chunk.strip()
+                        if not chunk_clean or len(chunk_clean.split()) < 5:
+                            continue
+                            
                         if self._disable_neural_summarizer:
                             partial_summaries.append(
-                                _extractive_summary(chunk, max_sentences=2, max_chars=220)
+                                _extractive_summary(chunk_clean, max_sentences=2, max_chars=220)
                             )
                             continue
 
-                        chunk_word_count = max(len(chunk.split()), 1)
+                        chunk_word_count = max(len(chunk_clean.split()), 1)
                         max_length = min(140, max(60, int(chunk_word_count * 0.7)))
                         min_length = min(45, max(25, int(max_length * 0.45)))
                         if min_length >= max_length:

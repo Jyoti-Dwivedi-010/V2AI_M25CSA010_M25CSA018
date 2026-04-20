@@ -157,7 +157,7 @@ services:
     container_name: v2ai-ui
     restart: unless-stopped
     environment:
-      API_BASE_URL: http://api:8000
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
     ports:
       - "8501:8501"
     depends_on:
