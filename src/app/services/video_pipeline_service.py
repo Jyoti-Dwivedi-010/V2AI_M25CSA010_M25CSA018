@@ -437,12 +437,11 @@ class V2AIPipelineService:
                     temperature=self.settings.generation_temperature,
                     do_sample=False,
                     repetition_penalty=1.1,
-                    return_full_text=False,
                 )
 
                 self._active_generation_model_name = model_name
                 self._disable_neural_generation = False
-                return HuggingFacePipeline(pipeline=generator)
+                return HuggingFacePipeline(pipeline=generator, pipeline_kwargs={"return_full_text": False})
             except Exception as exc:  # pragma: no cover - model loading path
                 last_error = exc
                 logger.warning(
