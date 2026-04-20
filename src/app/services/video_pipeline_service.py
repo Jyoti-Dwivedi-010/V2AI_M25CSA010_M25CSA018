@@ -292,6 +292,10 @@ def _simple_keywords(text: str, top_k: int) -> list[str]:
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
+    # Strip DeepSeek R1 reasoning blocks if present
+    import re
+    raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
+    
     try:
         loaded = json.loads(raw_text)
         return loaded if isinstance(loaded, dict) else {}
@@ -744,15 +748,15 @@ class V2AIPipelineService:
         self,
         system_prompt: str,
         user_message: str,
-        temperature: float = 0.3,
-        max_tokens: int = 2048,
+        temperature: float = 0.6,
+        max_tokens: int = 4096,
     ) -> str:
-        """Call Groq API with llama-3.3-70b-versatile. Returns raw text."""
+        """Call Groq API with deepseek-r1-distill-llama-70b. Returns raw text."""
         if GroqClient is None or not self.settings.groq_api_key:
             raise RuntimeError("Groq SDK not installed or GROQ_API_KEY not set")
         client = GroqClient(api_key=self.settings.groq_api_key)
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="deepseek-r1-distill-llama-70b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
