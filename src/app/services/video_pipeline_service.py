@@ -953,6 +953,7 @@ Transcript Chunk to analyze:
             "restrictfilenames": True,
             "quiet": True,
             "no_warnings": True,
+            "extractor_args": {"youtube": ["player_client=android,web"]},
         }
         if ffmpeg_path:
             ydl_opts["ffmpeg_location"] = ffmpeg_path
