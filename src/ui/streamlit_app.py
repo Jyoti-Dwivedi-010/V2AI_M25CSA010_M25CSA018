@@ -4,6 +4,7 @@ Enhanced UI with dark glassmorphism theme, animations, and full pipeline visibil
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
@@ -175,18 +176,78 @@ html, body, [data-testid="stAppViewContainer"] {
   color: var(--accent);
 }
 
-/* ── Flashcard ──────────────────────────────────────────── */
-.flashcard {
-  background: rgba(245,158,11,0.06);
-  border: 1px solid rgba(245,158,11,0.20);
-  border-radius: 12px;
-  padding: 0.9rem 1.1rem;
-  margin: 0.5rem 0;
-  transition: transform 0.2s ease;
+/* ── Flashcard (flip) ───────────────────────────────────── */
+.flashcard-flip {
+    background: transparent;
+    width: 100%;
+    min-height: 210px;
+    perspective: 1200px;
+    margin: 0.5rem 0;
 }
-.flashcard:hover { transform: translateY(-2px); }
-.flashcard .fc-q { font-weight: 600; color: var(--gold); font-size: 0.9rem; margin-bottom: 0.4rem; }
-.flashcard .fc-a { color: var(--text-dim); font-size: 0.88rem; }
+.flashcard-inner {
+    position: relative;
+    width: 100%;
+    min-height: 210px;
+    transition: transform 0.65s cubic-bezier(.2,.7,.2,1);
+    transform-style: preserve-3d;
+}
+.flashcard-flip:hover .flashcard-inner,
+.flashcard-flip:active .flashcard-inner,
+.flashcard-flip:focus-within .flashcard-inner {
+    transform: rotateY(180deg);
+}
+.flashcard-front,
+.flashcard-back {
+    position: absolute;
+    inset: 0;
+    border-radius: 14px;
+    padding: 1rem 1rem 0.95rem;
+    border: 1px solid rgba(245,158,11,0.26);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    overflow: hidden;
+}
+.flashcard-front {
+    background: linear-gradient(145deg, rgba(245,158,11,0.16), rgba(245,158,11,0.06));
+}
+.flashcard-back {
+    background: linear-gradient(145deg, rgba(16,185,129,0.15), rgba(16,185,129,0.06));
+    transform: rotateY(180deg);
+    border-color: rgba(16,185,129,0.35);
+}
+.fc-face-title {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.9;
+}
+.fc-face-title.q { color: #fbbf24; }
+.fc-face-title.a { color: #34d399; }
+.fc-text {
+    margin-top: 0.55rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+.flashcard-front .fc-text {
+    color: #fef3c7;
+    font-weight: 600;
+}
+.flashcard-back .fc-text { color: #d1fae5; }
+.fc-hint {
+    position: absolute;
+    right: 10px;
+    bottom: 8px;
+    font-size: 0.68rem;
+    color: rgba(255,255,255,0.7);
+    font-family: var(--mono);
+}
+@media (max-width: 900px) {
+    .flashcard-flip,
+    .flashcard-inner {
+        min-height: 190px;
+    }
+}
 
 /* ── Quiz card ──────────────────────────────────────────── */
 .quiz-card {
@@ -543,13 +604,41 @@ with upload_col:
 with session_col:
     if st.session_state["session_id"]:
         # Summary
-        st.markdown(
-            f"<div class='v-card'>"
-            f"<div class='section-title'>📄 AI Summary</div>"
-            f"<p style='line-height:1.7;color:#cbd5e1'>{st.session_state['summary']}</p>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        raw_summary = st.session_state.get("summary", "")
+        explained_text = ""
+        summarized_text = str(raw_summary)
+
+        try:
+            summary_data = json.loads(raw_summary)
+            if isinstance(summary_data, dict):
+                explained_text = str(summary_data.get("explained", "")).strip()
+                parsed_summarized = str(summary_data.get("summarized", "")).strip()
+                if parsed_summarized:
+                    summarized_text = parsed_summarized
+        except Exception:
+            pass
+
+        st.markdown("<div class='v-card'>", unsafe_allow_html=True)
+        tab_exp, tab_sum = st.tabs(["💡 AI Explained", "📝 AI Summarized"])
+        with tab_exp:
+            if explained_text:
+                st.markdown(
+                    f"<p style='line-height:1.7;color:#cbd5e1'>{explained_text}</p>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info(
+                    "AI Explained is unavailable for this run. "
+                    "Set GROQ_API_KEY to enable DeepSeek-powered explanation."
+                )
+
+        with tab_sum:
+            st.markdown(
+                f"<p style='line-height:1.7;color:#cbd5e1'>{summarized_text}</p>",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # Key Concepts
         if st.session_state["concepts"]:
@@ -586,9 +675,19 @@ if st.session_state["session_id"]:
             for i, card in enumerate(flashcards):
                 with cols[i % 2]:
                     st.markdown(
-                        f"<div class='flashcard'>"
-                        f"<div class='fc-q'>Q{i+1}. {card['question']}</div>"
-                        f"<div class='fc-a'>→ {card['answer']}</div>"
+                        f"<div class='flashcard-flip'>"
+                        f"  <div class='flashcard-inner'>"
+                        f"    <div class='flashcard-front'>"
+                        f"      <div class='fc-face-title q'>Flashcard {i+1} · Question</div>"
+                        f"      <div class='fc-text'>{card['question']}</div>"
+                        f"      <div class='fc-hint'>Hover to reveal answer</div>"
+                        f"    </div>"
+                        f"    <div class='flashcard-back'>"
+                        f"      <div class='fc-face-title a'>Flashcard {i+1} · Answer</div>"
+                        f"      <div class='fc-text'>{card['answer']}</div>"
+                        f"      <div class='fc-hint'>Hover again to flip back</div>"
+                        f"    </div>"
+                        f"  </div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )

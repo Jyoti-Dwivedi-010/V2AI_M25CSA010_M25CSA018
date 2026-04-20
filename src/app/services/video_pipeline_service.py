@@ -25,7 +25,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
+from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import desc, select
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
@@ -33,7 +33,13 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 from app.config import Settings, load_settings
 from app.db.models import LectureSession, QueryLog
 from app.db.session import SessionLocal, init_database
+from app.services.safe_hf_pipeline import SafeHuggingFacePipeline
 from app.storage.minio_store import MinIOArtifactStore
+
+try:
+    from groq import Groq as GroqClient
+except ImportError:  # pragma: no cover - optional runtime dependency
+    GroqClient = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -286,16 +292,17 @@ def _simple_keywords(text: str, top_k: int) -> list[str]:
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
+    cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
     try:
-        loaded = json.loads(raw_text)
+        loaded = json.loads(cleaned)
         return loaded if isinstance(loaded, dict) else {}
     except json.JSONDecodeError:
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
         if start == -1 or end == -1 or end <= start:
             return {}
         try:
-            loaded = json.loads(raw_text[start : end + 1])
+            loaded = json.loads(cleaned[start : end + 1])
             return loaded if isinstance(loaded, dict) else {}
         except json.JSONDecodeError:
             return {}
@@ -408,7 +415,7 @@ class V2AIPipelineService:
 
         return _dedupe_preserving_order(candidates)
 
-    def _build_generation_llm(self) -> HuggingFacePipeline | None:
+    def _build_generation_llm(self) -> SafeHuggingFacePipeline | None:
         last_error: Exception | None = None
         for model_name in self._get_generation_model_candidates():
             try:
@@ -427,16 +434,9 @@ class V2AIPipelineService:
                     no_repeat_ngram_size=3,
                 )
 
-                # Patch generator to ignore return_full_text which LangChain injects incorrectly for seq2seq
-                original_call = generator.__call__
-                def patched_call(*args, **kwargs):
-                    kwargs.pop("return_full_text", None)
-                    return original_call(*args, **kwargs)
-                generator.__call__ = patched_call
-                
                 self._active_generation_model_name = model_name
                 self._disable_neural_generation = False
-                return HuggingFacePipeline(pipeline=generator)
+                return SafeHuggingFacePipeline(pipeline=generator)
             except Exception as exc:  # pragma: no cover - model loading path
                 last_error = exc
                 logger.warning(
@@ -512,89 +512,140 @@ class V2AIPipelineService:
             return None
 
     def _summarize_transcript(self, transcript_text: str) -> str:
-        if len(transcript_text.split()) < 40:
-            return transcript_text
-
-        summarizer = self._get_summarizer()
-        if summarizer is None:
-            return _extractive_summary(transcript_text)
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2200,
-            chunk_overlap=250,
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-        chunks = splitter.split_text(transcript_text)
-        if not chunks:
-            return transcript_text
-
-        partial_summaries: list[str] = []
-        for chunk in chunks[:8]:
-            if self._disable_neural_summarizer:
-                partial_summaries.append(
-                    _extractive_summary(chunk, max_sentences=2, max_chars=220)
-                )
-                continue
-
-            chunk_word_count = max(len(chunk.split()), 1)
-            max_length = min(140, max(60, int(chunk_word_count * 0.7)))
-            min_length = min(45, max(25, int(max_length * 0.45)))
-            if min_length >= max_length:
-                min_length = max(20, max_length - 20)
-
+        explained = ""
+        if self._has_groq():
             try:
-                summary_part = summarizer(
-                    chunk,
-                    max_length=max_length,
-                    min_length=min_length,
-                    do_sample=False,
-                )[0]["summary_text"]
-            except Exception as exc:  # pragma: no cover - runtime model path
-                self._disable_neural_summarizer = True
-                logger.warning(
-                    "Neural summarization failed during chunking. "
-                    "Using extractive fallback: %s",
-                    exc,
+                system_prompt = (
+                    "You are an expert educator. Provide an in-depth explanation of the lecture "
+                    "transcript, covering key concepts, intuition, and practical implications."
                 )
-                summary_part = _extractive_summary(
-                    chunk,
-                    max_sentences=2,
-                    max_chars=220,
+                raw_explained = self._call_groq(
+                    system_prompt,
+                    transcript_text[:15000],
+                    temperature=0.3,
+                    max_tokens=1800,
                 )
-            partial_summaries.append(summary_part)
+                explained = _clean_generated_answer(
+                    raw_explained,
+                    max_sentences=30,
+                    max_chars=5000,
+                )
+            except Exception as exc:  # pragma: no cover - external API path
+                logger.warning("Groq detailed summary failed: %s", exc)
 
-        merged = " ".join(partial_summaries)
-        if len(partial_summaries) > 1:
-            if self._disable_neural_summarizer:
-                merged = _extractive_summary(merged, max_sentences=4, max_chars=500)
+        source_text = explained if explained and len(explained.split()) > 80 else transcript_text
+
+        if len(source_text.split()) < 40:
+            crisp = _extractive_summary(source_text, max_sentences=4, max_chars=500)
+        else:
+            summarizer = self._get_summarizer()
+            if summarizer is None:
+                crisp = _extractive_summary(source_text)
             else:
-                merged_word_count = max(len(merged.split()), 1)
-                merged_max_length = min(170, max(70, int(merged_word_count * 0.65)))
-                merged_min_length = min(60, max(30, int(merged_max_length * 0.45)))
-                if merged_min_length >= merged_max_length:
-                    merged_min_length = max(25, merged_max_length - 25)
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=2200,
+                    chunk_overlap=250,
+                    separators=["\n\n", "\n", ". ", " ", ""],
+                )
+                chunks = splitter.split_text(source_text)
+                if not chunks:
+                    crisp = _extractive_summary(source_text)
+                else:
+                    partial_summaries: list[str] = []
+                    for chunk in chunks[:8]:
+                        chunk_clean = chunk.strip()
+                        if not chunk_clean or len(chunk_clean.split()) < 5:
+                            continue
 
-                try:
-                    merged = summarizer(
-                        merged,
-                        max_length=merged_max_length,
-                        min_length=merged_min_length,
-                        do_sample=False,
-                    )[0]["summary_text"]
-                except Exception as exc:  # pragma: no cover - runtime model path
-                    self._disable_neural_summarizer = True
-                    logger.warning(
-                        "Neural summarization failed during merge. "
-                        "Using extractive fallback: %s",
-                        exc,
-                    )
-                    merged = _extractive_summary(
-                        merged,
-                        max_sentences=4,
-                        max_chars=500,
-                    )
+                        if self._disable_neural_summarizer:
+                            partial_summaries.append(
+                                _extractive_summary(chunk_clean, max_sentences=2, max_chars=220)
+                            )
+                            continue
 
-        return _extractive_summary(merged, max_sentences=5, max_chars=700)
+                        chunk_word_count = max(len(chunk_clean.split()), 1)
+                        max_length = min(140, max(60, int(chunk_word_count * 0.7)))
+                        min_length = min(45, max(25, int(max_length * 0.45)))
+                        if min_length >= max_length:
+                            min_length = max(20, max_length - 20)
+
+                        try:
+                            summary_part = summarizer(
+                                chunk_clean,
+                                max_length=max_length,
+                                min_length=min_length,
+                                do_sample=False,
+                            )[0]["summary_text"]
+                        except Exception as exc:  # pragma: no cover - runtime model path
+                            self._disable_neural_summarizer = True
+                            logger.warning(
+                                "Neural summarization failed during chunking. "
+                                "Using extractive fallback: %s",
+                                exc,
+                            )
+                            summary_part = _extractive_summary(
+                                chunk_clean,
+                                max_sentences=2,
+                                max_chars=220,
+                            )
+                        partial_summaries.append(summary_part)
+
+                    if not partial_summaries:
+                        crisp = _extractive_summary(source_text, max_sentences=5, max_chars=700)
+                    else:
+                        merged = " ".join(partial_summaries)
+                        if len(partial_summaries) > 1:
+                            if self._disable_neural_summarizer:
+                                merged = _extractive_summary(
+                                    merged,
+                                    max_sentences=4,
+                                    max_chars=500,
+                                )
+                            else:
+                                merged_word_count = max(len(merged.split()), 1)
+                                merged_max_length = min(
+                                    170,
+                                    max(70, int(merged_word_count * 0.65)),
+                                )
+                                merged_min_length = min(
+                                    60,
+                                    max(30, int(merged_max_length * 0.45)),
+                                )
+                                if merged_min_length >= merged_max_length:
+                                    merged_min_length = max(25, merged_max_length - 25)
+
+                                try:
+                                    merged = summarizer(
+                                        merged,
+                                        max_length=merged_max_length,
+                                        min_length=merged_min_length,
+                                        do_sample=False,
+                                    )[0]["summary_text"]
+                                except Exception as exc:  # pragma: no cover - runtime model path
+                                    self._disable_neural_summarizer = True
+                                    logger.warning(
+                                        "Neural summarization failed during merge. "
+                                        "Using extractive fallback: %s",
+                                        exc,
+                                    )
+                                    merged = _extractive_summary(
+                                        merged,
+                                        max_sentences=4,
+                                        max_chars=500,
+                                    )
+
+                        crisp = _extractive_summary(merged, max_sentences=5, max_chars=700)
+
+        if not explained:
+            explained = _extractive_summary(
+                transcript_text,
+                max_sentences=14,
+                max_chars=3200,
+            )
+        if not crisp:
+            crisp = _extractive_summary(explained or transcript_text, max_sentences=5, max_chars=700)
+
+        return json.dumps({"explained": explained, "summarized": crisp})
 
     def _extract_concepts(self, transcript_text: str) -> list[str]:
         candidates = _simple_keywords(transcript_text, top_k=40)
@@ -727,6 +778,31 @@ class V2AIPipelineService:
         source_text = " ".join(selected_sentences) if selected_sentences else merged
         answer = _extractive_summary(source_text, max_sentences=4, max_chars=750)
         return answer or "I cannot find this in the lecture transcript."
+
+    def _call_groq(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float = 0.5,
+        max_tokens: int = 1024,
+    ) -> str:
+        if GroqClient is None or not self.settings.groq_api_key:
+            raise RuntimeError("Groq SDK not installed or GROQ_API_KEY not set")
+
+        client = GroqClient(api_key=self.settings.groq_api_key)
+        response = client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
+
+    def _has_groq(self) -> bool:
+        return bool(GroqClient is not None and self.settings.groq_api_key)
 
     def _generate_study_materials(
         self,
@@ -1019,10 +1095,19 @@ Transcript excerpt:
         transcript_text = transcription["text"]
         segments = transcription["segments"]
         summary_text = self._summarize_transcript(transcript_text)
+        summary_sections = _extract_json_object(summary_text)
+        summary_for_materials = str(
+            summary_sections.get("explained")
+            or summary_sections.get("summarized")
+            or summary_text
+        ).strip()
+        if not summary_for_materials:
+            summary_for_materials = _extractive_summary(transcript_text)
+
         concepts = self._extract_concepts(transcript_text)
         flashcards, quiz_questions = self._generate_study_materials(
             transcript_text=transcript_text,
-            summary_text=summary_text,
+            summary_text=summary_for_materials,
             concepts=concepts,
         )
 
