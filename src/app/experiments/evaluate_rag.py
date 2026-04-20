@@ -29,7 +29,6 @@ from app.config import load_settings
 from app.services.rag_service import get_rag_service
 from app.tracking.wandb_tracker import WandBTracker
 
-
 # ---------------------------------------------------------------------------
 # ROUGE-L (pure Python — no external deps needed)
 # ---------------------------------------------------------------------------

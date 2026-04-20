@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import gc
+import hashlib
 import json
 import logging
 import os
@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -1378,7 +1378,7 @@ Answer:
         if retention_days < 1:
             raise ValueError("retention_days must be >= 1")
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
         removed_session_ids: list[str] = []
 
         with SessionLocal() as db:
