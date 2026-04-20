@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import logging
 import os
@@ -400,6 +401,27 @@ class V2AIPipelineService:
         self.settings.uploads_path.mkdir(parents=True, exist_ok=True)
         self.settings.transcript_store_path.mkdir(parents=True, exist_ok=True)
         self.settings.vector_store_path.mkdir(parents=True, exist_ok=True)
+
+    def _release_gpu_memory(self, reason: str) -> None:
+        """Best-effort CUDA cache cleanup after a completed task."""
+        if not self._use_cuda() or torch is None:
+            return
+
+        try:
+            # Release cached model instances so CUDA memory is reclaimable between requests.
+            _build_whisper_model.cache_clear()
+            _build_sentence_transformer.cache_clear()
+            _build_summarizer_pipeline.cache_clear()
+            self.llm = None
+            self._active_generation_model_name = ""
+
+            gc.collect()
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+            logger.info("Released GPU cache after task: %s", reason)
+        except Exception as exc:  # pragma: no cover - defensive cleanup path
+            logger.warning("GPU memory release failed after %s: %s", reason, exc)
 
     def _get_generation_model_candidates(self) -> list[str]:
         preferred = (
@@ -810,6 +832,9 @@ class V2AIPipelineService:
         summary_text: str,
         concepts: list[str],
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+        if not self._disable_neural_generation and self.llm is None:
+            self.llm = self._build_generation_llm()
+
         if self._disable_neural_generation or self.llm is None:
             return self._fallback_study_materials(transcript_text, summary_text, concepts)
 
@@ -1086,100 +1111,103 @@ Transcript excerpt:
         if not content:
             raise ValueError("Uploaded file is empty")
 
-        session_id = str(uuid.uuid4())
-        session_title = (title or Path(filename).stem or "Lecture Session").strip()
-
-        local_video_path = self._save_local_video(filename, content, session_id)
-        transcription = self._transcribe(local_video_path)
-
-        transcript_text = transcription["text"]
-        segments = transcription["segments"]
-        summary_text = self._summarize_transcript(transcript_text)
-        summary_sections = _extract_json_object(summary_text)
-        summary_for_materials = str(
-            summary_sections.get("explained")
-            or summary_sections.get("summarized")
-            or summary_text
-        ).strip()
-        if not summary_for_materials:
-            summary_for_materials = _extractive_summary(transcript_text)
-
-        concepts = self._extract_concepts(transcript_text)
-        flashcards, quiz_questions = self._generate_study_materials(
-            transcript_text=transcript_text,
-            summary_text=summary_for_materials,
-            concepts=concepts,
-        )
-
-        self._build_vector_index(session_id, segments, source_name=Path(filename).name)
-
-        duration_seconds = 0.0
-        if segments:
-            duration_seconds = float(segments[-1].get("end", 0.0))
-
-        video_sha256 = hashlib.sha256(content).hexdigest()
-
-        metadata = {
-            "session_id": session_id,
-            "video_filename": filename,
-            "language": transcription["language"],
-            "duration_seconds": duration_seconds,
-            "segment_count": len(segments),
-            "video_size_bytes": len(content),
-            "video_sha256": video_sha256,
-        }
-        if source_url:
-            metadata["source_url"] = source_url
-
-        transcript_payload = {
-            "metadata": metadata,
-            "summary": summary_text,
-            "concepts": concepts,
-            "flashcards": flashcards,
-            "quiz_questions": quiz_questions,
-            "segments": segments,
-        }
-        transcript_path = self.settings.transcript_store_path / f"{session_id}.json"
-        transcript_path.write_text(json.dumps(transcript_payload, indent=2), encoding="utf-8")
-
         try:
-            self.minio_store.upload_file(
-                local_video_path,
-                f"sessions/{session_id}/video/{Path(filename).name}",
-            )
-            self.minio_store.upload_file(
-                transcript_path,
-                f"sessions/{session_id}/transcript/{session_id}.json",
-            )
-        except Exception as exc:  # pragma: no cover - external service path
-            logger.warning("MinIO upload skipped: %s", exc)
+            session_id = str(uuid.uuid4())
+            session_title = (title or Path(filename).stem or "Lecture Session").strip()
 
-        self._persist_session(
-            session_id=session_id,
-            title=session_title,
-            video_filename=Path(filename).name,
-            video_path=local_video_path,
-            transcript_text=transcript_text,
-            summary_text=summary_text,
-            concepts=concepts,
-            flashcards=flashcards,
-            quiz_questions=quiz_questions,
-            duration_seconds=duration_seconds,
-            metadata_json=metadata,
-        )
+            local_video_path = self._save_local_video(filename, content, session_id)
+            transcription = self._transcribe(local_video_path)
 
-        return {
-            "session_id": session_id,
-            "title": session_title,
-            "video_filename": Path(filename).name,
-            "summary": summary_text,
-            "concepts": concepts,
-            "flashcards": flashcards,
-            "quiz_questions": quiz_questions,
-            "duration_seconds": round(duration_seconds, 2),
-            "transcript_word_count": len(transcript_text.split()),
-            "metadata": metadata,
-        }
+            transcript_text = transcription["text"]
+            segments = transcription["segments"]
+            summary_text = self._summarize_transcript(transcript_text)
+            summary_sections = _extract_json_object(summary_text)
+            summary_for_materials = str(
+                summary_sections.get("explained")
+                or summary_sections.get("summarized")
+                or summary_text
+            ).strip()
+            if not summary_for_materials:
+                summary_for_materials = _extractive_summary(transcript_text)
+
+            concepts = self._extract_concepts(transcript_text)
+            flashcards, quiz_questions = self._generate_study_materials(
+                transcript_text=transcript_text,
+                summary_text=summary_for_materials,
+                concepts=concepts,
+            )
+
+            self._build_vector_index(session_id, segments, source_name=Path(filename).name)
+
+            duration_seconds = 0.0
+            if segments:
+                duration_seconds = float(segments[-1].get("end", 0.0))
+
+            video_sha256 = hashlib.sha256(content).hexdigest()
+
+            metadata = {
+                "session_id": session_id,
+                "video_filename": filename,
+                "language": transcription["language"],
+                "duration_seconds": duration_seconds,
+                "segment_count": len(segments),
+                "video_size_bytes": len(content),
+                "video_sha256": video_sha256,
+            }
+            if source_url:
+                metadata["source_url"] = source_url
+
+            transcript_payload = {
+                "metadata": metadata,
+                "summary": summary_text,
+                "concepts": concepts,
+                "flashcards": flashcards,
+                "quiz_questions": quiz_questions,
+                "segments": segments,
+            }
+            transcript_path = self.settings.transcript_store_path / f"{session_id}.json"
+            transcript_path.write_text(json.dumps(transcript_payload, indent=2), encoding="utf-8")
+
+            try:
+                self.minio_store.upload_file(
+                    local_video_path,
+                    f"sessions/{session_id}/video/{Path(filename).name}",
+                )
+                self.minio_store.upload_file(
+                    transcript_path,
+                    f"sessions/{session_id}/transcript/{session_id}.json",
+                )
+            except Exception as exc:  # pragma: no cover - external service path
+                logger.warning("MinIO upload skipped: %s", exc)
+
+            self._persist_session(
+                session_id=session_id,
+                title=session_title,
+                video_filename=Path(filename).name,
+                video_path=local_video_path,
+                transcript_text=transcript_text,
+                summary_text=summary_text,
+                concepts=concepts,
+                flashcards=flashcards,
+                quiz_questions=quiz_questions,
+                duration_seconds=duration_seconds,
+                metadata_json=metadata,
+            )
+
+            return {
+                "session_id": session_id,
+                "title": session_title,
+                "video_filename": Path(filename).name,
+                "summary": summary_text,
+                "concepts": concepts,
+                "flashcards": flashcards,
+                "quiz_questions": quiz_questions,
+                "duration_seconds": round(duration_seconds, 2),
+                "transcript_word_count": len(transcript_text.split()),
+                "metadata": metadata,
+            }
+        finally:
+            self._release_gpu_memory("create_session")
 
     def create_session_from_url(
         self,
@@ -1219,22 +1247,26 @@ Transcript excerpt:
     def ask_question(self, session_id: str, question: str) -> dict[str, Any]:
         start_time = time.perf_counter()
 
-        vector_store = self._load_vector_store(session_id)
-        retriever = vector_store.as_retriever(search_kwargs={"k": self.settings.retrieval_k})
-        docs = retriever.invoke(question)
+        try:
+            if not self._disable_neural_generation and self.llm is None:
+                self.llm = self._build_generation_llm()
 
-        if not docs:
-            raise RuntimeError("No context retrieved for this question")
+            vector_store = self._load_vector_store(session_id)
+            retriever = vector_store.as_retriever(search_kwargs={"k": self.settings.retrieval_k})
+            docs = retriever.invoke(question)
 
-        context_blocks = []
-        for doc in docs:
-            start_hms = doc.metadata.get("start_hms", "00:00:00")
-            end_hms = doc.metadata.get("end_hms", "00:00:00")
-            context_blocks.append(f"[{start_hms}-{end_hms}] {doc.page_content}")
-        context = "\n\n".join(context_blocks)
+            if not docs:
+                raise RuntimeError("No context retrieved for this question")
 
-        prompt = PromptTemplate.from_template(
-            """
+            context_blocks = []
+            for doc in docs:
+                start_hms = doc.metadata.get("start_hms", "00:00:00")
+                end_hms = doc.metadata.get("end_hms", "00:00:00")
+                context_blocks.append(f"[{start_hms}-{end_hms}] {doc.page_content}")
+            context = "\n\n".join(context_blocks)
+
+            prompt = PromptTemplate.from_template(
+                """
 You are a lecture understanding assistant.
 Use only the transcript context to answer the question.
 Answer in 3 to 5 concise sentences.
@@ -1249,62 +1281,64 @@ Question:
 
 Answer:
 """.strip()
-        )
-
-        if self._disable_neural_generation or self.llm is None:
-            answer = self._fallback_answer_from_docs(question, docs)
-        else:
-            chain = prompt | self.llm | StrOutputParser()
-            raw_answer = str(chain.invoke({"context": context, "question": question})).strip()
-            answer = _clean_generated_answer(raw_answer)
-            if not answer:
-                answer = "I cannot find this in the lecture transcript."
-
-        citations: list[dict[str, Any]] = []
-        seen = set()
-        for doc in docs:
-            key = (
-                doc.metadata.get("start_seconds", 0.0),
-                doc.metadata.get("end_seconds", 0.0),
-                doc.page_content[:80],
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            citations.append(
-                {
-                    "source": str(doc.metadata.get("source", "unknown")),
-                    "start_seconds": float(doc.metadata.get("start_seconds", 0.0)),
-                    "end_seconds": float(doc.metadata.get("end_seconds", 0.0)),
-                    "start_hms": str(doc.metadata.get("start_hms", "00:00:00")),
-                    "end_hms": str(doc.metadata.get("end_hms", "00:00:00")),
-                    "text": doc.page_content,
-                }
             )
 
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
+            if self._disable_neural_generation or self.llm is None:
+                answer = self._fallback_answer_from_docs(question, docs)
+            else:
+                chain = prompt | self.llm | StrOutputParser()
+                raw_answer = str(chain.invoke({"context": context, "question": question})).strip()
+                answer = _clean_generated_answer(raw_answer)
+                if not answer:
+                    answer = "I cannot find this in the lecture transcript."
 
-        with SessionLocal() as db:
-            record = QueryLog(
-                session_id=session_id,
-                question=question,
-                answer=answer,
-                latency_ms=latency_ms,
-                citations=citations,
-            )
-            db.add(record)
-            db.commit()
+            citations: list[dict[str, Any]] = []
+            seen = set()
+            for doc in docs:
+                key = (
+                    doc.metadata.get("start_seconds", 0.0),
+                    doc.metadata.get("end_seconds", 0.0),
+                    doc.page_content[:80],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                citations.append(
+                    {
+                        "source": str(doc.metadata.get("source", "unknown")),
+                        "start_seconds": float(doc.metadata.get("start_seconds", 0.0)),
+                        "end_seconds": float(doc.metadata.get("end_seconds", 0.0)),
+                        "start_hms": str(doc.metadata.get("start_hms", "00:00:00")),
+                        "end_hms": str(doc.metadata.get("end_hms", "00:00:00")),
+                        "text": doc.page_content,
+                    }
+                )
 
-        return {
-            "session_id": session_id,
-            "question": question,
-            "answer": answer,
-            "citations": citations,
-            "latency_ms": round(latency_ms, 2),
-            "question_length": len(question),
-            "answer_length": len(answer),
-            "model_name": self._active_generation_model_name or self.settings.hf_generation_model,
-        }
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+            with SessionLocal() as db:
+                record = QueryLog(
+                    session_id=session_id,
+                    question=question,
+                    answer=answer,
+                    latency_ms=latency_ms,
+                    citations=citations,
+                )
+                db.add(record)
+                db.commit()
+
+            return {
+                "session_id": session_id,
+                "question": question,
+                "answer": answer,
+                "citations": citations,
+                "latency_ms": round(latency_ms, 2),
+                "question_length": len(question),
+                "answer_length": len(answer),
+                "model_name": self._active_generation_model_name or self.settings.hf_generation_model,
+            }
+        finally:
+            self._release_gpu_memory("ask_question")
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with SessionLocal() as db:
