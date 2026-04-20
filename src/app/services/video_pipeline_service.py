@@ -28,18 +28,12 @@ from langchain_core.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import desc, select
-from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 
 from app.config import Settings, load_settings
 from app.db.models import LectureSession, QueryLog
 from app.db.session import SessionLocal, init_database
 from app.storage.minio_store import MinIOArtifactStore
-from app.tracking.mlflow_tracker import MLflowTracker
-
-try:
-    from groq import Groq as GroqClient
-except ImportError:  # pragma: no cover
-    GroqClient = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -292,10 +286,6 @@ def _simple_keywords(text: str, top_k: int) -> list[str]:
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
-    # Strip DeepSeek R1 reasoning blocks if present
-    import re
-    raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
-    
     try:
         loaded = json.loads(raw_text)
         return loaded if isinstance(loaded, dict) else {}
@@ -383,8 +373,6 @@ class V2AIPipelineService:
         self.settings = settings or load_settings()
         self._ensure_paths()
         init_database()
-        
-        self.tracker = MLflowTracker()
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=self.settings.hf_embedding_model,
@@ -415,7 +403,7 @@ class V2AIPipelineService:
         candidates = [
             preferred,
             self.settings.hf_generation_model,
-            "Qwen/Qwen2.5-0.5B-Instruct",
+            "google/flan-t5-small",
         ]
 
         return _dedupe_preserving_order(candidates)
@@ -425,30 +413,27 @@ class V2AIPipelineService:
         for model_name in self._get_generation_model_candidates():
             try:
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
-                config = AutoConfig.from_pretrained(model_name)
-                
-                if getattr(config, "is_encoder_decoder", False):
-                    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-                    task = "text2text-generation"
-                else:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        model_name, 
-                        torch_dtype=torch.float16 if self._use_cuda() else torch.float32
-                    )
-                    task = "text-generation"
+                model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
                 generator = pipeline(
-                    task=task,
+                    task="text2text-generation",
                     model=model,
                     tokenizer=tokenizer,
                     device=0 if self._use_cuda() else -1,
-                    max_new_tokens=min(self.settings.generation_max_tokens, 1500),  # Increased for massive JSON context
+                    max_new_tokens=min(self.settings.generation_max_tokens, 160),
                     temperature=self.settings.generation_temperature,
                     do_sample=False,
-                    repetition_penalty=1.1,
-                    return_full_text=False,
+                    repetition_penalty=1.2,
+                    no_repeat_ngram_size=3,
                 )
 
+                # Patch generator to ignore return_full_text which LangChain injects incorrectly for seq2seq
+                original_call = generator.__call__
+                def patched_call(*args, **kwargs):
+                    kwargs.pop("return_full_text", None)
+                    return original_call(*args, **kwargs)
+                generator.__call__ = patched_call
+                
                 self._active_generation_model_name = model_name
                 self._disable_neural_generation = False
                 return HuggingFacePipeline(pipeline=generator)
@@ -527,126 +512,89 @@ class V2AIPipelineService:
             return None
 
     def _summarize_transcript(self, transcript_text: str) -> str:
-        # Step 1: In-depth explanation via Groq/DeepSeek
-        explained = ""
-        if self._has_groq():
-            try:
-                system_prompt = (
-                    "You are an expert educator. Write a highly detailed, comprehensive summary "
-                    "of the provided lecture transcript. Capture all key concepts, definitions, "
-                    "nuances, and conclusions. Do not omit important details."
-                )
-                raw_explained = self._call_groq(
-                    system_prompt, 
-                    transcript_text[:15000],  # Give it a massive context window
-                    temperature=0.3, 
-                    max_tokens=2048
-                )
-                import re
-                explained = re.sub(r'<think>.*?</think>', '', raw_explained, flags=re.DOTALL).strip()
-            except Exception as exc:
-                logger.warning("Groq detailed summary failed: %s", exc)
-
-        # Step 2: Crisp summary via BART
-        crisp = ""
-        # If transcript is very short, just use it directly
         if len(transcript_text.split()) < 40:
-            crisp = transcript_text
-        else:
-            summarizer = self._get_summarizer()
-            # If we successfully generated an explanation, we can summarize THAT to make it even crisper
-            # Otherwise, summarize the original transcript
-            source_text = explained if explained and len(explained.split()) > 100 else transcript_text
-            
-            if summarizer is None:
-                crisp = _extractive_summary(source_text)
-            else:
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=2200,
-                    chunk_overlap=250,
-                    separators=["\n\n", "\n", ". ", " ", ""],
+            return transcript_text
+
+        summarizer = self._get_summarizer()
+        if summarizer is None:
+            return _extractive_summary(transcript_text)
+
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2200,
+            chunk_overlap=250,
+            separators=["\n\n", "\n", ". ", " ", ""],
+        )
+        chunks = splitter.split_text(transcript_text)
+        if not chunks:
+            return transcript_text
+
+        partial_summaries: list[str] = []
+        for chunk in chunks[:8]:
+            if self._disable_neural_summarizer:
+                partial_summaries.append(
+                    _extractive_summary(chunk, max_sentences=2, max_chars=220)
                 )
-                chunks = splitter.split_text(source_text)
-                if not chunks:
-                    crisp = source_text
-                else:
-                    partial_summaries: list[str] = []
-                    for chunk in chunks[:8]:
-                        chunk_clean = chunk.strip()
-                        if not chunk_clean or len(chunk_clean.split()) < 5:
-                            continue
-                            
-                        if self._disable_neural_summarizer:
-                            partial_summaries.append(
-                                _extractive_summary(chunk_clean, max_sentences=2, max_chars=220)
-                            )
-                            continue
+                continue
 
-                        chunk_word_count = max(len(chunk_clean.split()), 1)
-                        max_length = min(140, max(60, int(chunk_word_count * 0.7)))
-                        min_length = min(45, max(25, int(max_length * 0.45)))
-                        if min_length >= max_length:
-                            min_length = max(20, max_length - 20)
+            chunk_word_count = max(len(chunk.split()), 1)
+            max_length = min(140, max(60, int(chunk_word_count * 0.7)))
+            min_length = min(45, max(25, int(max_length * 0.45)))
+            if min_length >= max_length:
+                min_length = max(20, max_length - 20)
 
-                        try:
-                            summary_part = summarizer(
-                                chunk,
-                                max_length=max_length,
-                                min_length=min_length,
-                                do_sample=False,
-                            )[0]["summary_text"]
-                        except Exception as exc:  # pragma: no cover - runtime model path
-                            self._disable_neural_summarizer = True
-                            logger.warning(
-                                "Neural summarization failed during chunking. "
-                                "Using extractive fallback: %s",
-                                exc,
-                            )
-                            summary_part = _extractive_summary(
-                                chunk,
-                                max_sentences=2,
-                                max_chars=220,
-                            )
-                        partial_summaries.append(summary_part)
+            try:
+                summary_part = summarizer(
+                    chunk,
+                    max_length=max_length,
+                    min_length=min_length,
+                    do_sample=False,
+                )[0]["summary_text"]
+            except Exception as exc:  # pragma: no cover - runtime model path
+                self._disable_neural_summarizer = True
+                logger.warning(
+                    "Neural summarization failed during chunking. "
+                    "Using extractive fallback: %s",
+                    exc,
+                )
+                summary_part = _extractive_summary(
+                    chunk,
+                    max_sentences=2,
+                    max_chars=220,
+                )
+            partial_summaries.append(summary_part)
 
-                    merged = " ".join(partial_summaries)
-                    if len(partial_summaries) > 1:
-                        if self._disable_neural_summarizer:
-                            merged = _extractive_summary(merged, max_sentences=4, max_chars=500)
-                        else:
-                            merged_word_count = max(len(merged.split()), 1)
-                            merged_max_length = min(170, max(70, int(merged_word_count * 0.65)))
-                            merged_min_length = min(60, max(30, int(merged_max_length * 0.45)))
-                            if merged_min_length >= merged_max_length:
-                                merged_min_length = max(25, merged_max_length - 25)
+        merged = " ".join(partial_summaries)
+        if len(partial_summaries) > 1:
+            if self._disable_neural_summarizer:
+                merged = _extractive_summary(merged, max_sentences=4, max_chars=500)
+            else:
+                merged_word_count = max(len(merged.split()), 1)
+                merged_max_length = min(170, max(70, int(merged_word_count * 0.65)))
+                merged_min_length = min(60, max(30, int(merged_max_length * 0.45)))
+                if merged_min_length >= merged_max_length:
+                    merged_min_length = max(25, merged_max_length - 25)
 
-                            try:
-                                merged = summarizer(
-                                    merged,
-                                    max_length=merged_max_length,
-                                    min_length=merged_min_length,
-                                    do_sample=False,
-                                )[0]["summary_text"]
-                            except Exception as exc:  # pragma: no cover - runtime model path
-                                self._disable_neural_summarizer = True
-                                logger.warning(
-                                    "Neural summarization failed during merge. "
-                                    "Using extractive fallback: %s",
-                                    exc,
-                                )
-                                merged = _extractive_summary(
-                                    merged,
-                                    max_sentences=4,
-                                    max_chars=500,
-                                )
+                try:
+                    merged = summarizer(
+                        merged,
+                        max_length=merged_max_length,
+                        min_length=merged_min_length,
+                        do_sample=False,
+                    )[0]["summary_text"]
+                except Exception as exc:  # pragma: no cover - runtime model path
+                    self._disable_neural_summarizer = True
+                    logger.warning(
+                        "Neural summarization failed during merge. "
+                        "Using extractive fallback: %s",
+                        exc,
+                    )
+                    merged = _extractive_summary(
+                        merged,
+                        max_sentences=4,
+                        max_chars=500,
+                    )
 
-                    crisp = _extractive_summary(merged, max_sentences=5, max_chars=700)
-        
-        import json
-        return json.dumps({
-            "explained": explained,
-            "summarized": crisp
-        })
+        return _extractive_summary(merged, max_sentences=5, max_chars=700)
 
     def _extract_concepts(self, transcript_text: str) -> list[str]:
         candidates = _simple_keywords(transcript_text, top_k=40)
@@ -778,33 +726,7 @@ class V2AIPipelineService:
 
         source_text = " ".join(selected_sentences) if selected_sentences else merged
         answer = _extractive_summary(source_text, max_sentences=4, max_chars=750)
-        self.tracker.start_run("inference")
         return answer or "I cannot find this in the lecture transcript."
-
-    def _call_groq(
-        self,
-        system_prompt: str,
-        user_message: str,
-        temperature: float = 0.6,
-        max_tokens: int = 4096,
-    ) -> str:
-        """Call Groq API with deepseek-r1-distill-llama-70b. Returns raw text."""
-        if GroqClient is None or not self.settings.groq_api_key:
-            raise RuntimeError("Groq SDK not installed or GROQ_API_KEY not set")
-        client = GroqClient(api_key=self.settings.groq_api_key)
-        response = client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content or ""
-
-    def _has_groq(self) -> bool:
-        return bool(GroqClient is not None and self.settings.groq_api_key)
 
     def _generate_study_materials(
         self,
@@ -812,208 +734,97 @@ class V2AIPipelineService:
         summary_text: str,
         concepts: list[str],
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-        # --- Groq path (preferred) ---
-        if self._has_groq():
-            return self._generate_study_materials_groq(transcript_text, summary_text, concepts)
-
-        # --- Local LLM fallback ---
         if self._disable_neural_generation or self.llm is None:
             return self._fallback_study_materials(transcript_text, summary_text, concepts)
 
         prompt = PromptTemplate.from_template(
             """
-You are a rigorous university professor. Your task is to generate deeply conceptual, highly difficult study materials from the provided lecture transcript chunk.
-The questions MUST require deep synthesis of the concepts, not mere definitions. They should be at the level of a graduate exam.
-Do NOT ask basic "What is X?" questions. Instead, ask "Why is X preferred over Y in this scenario?" or "How does X affect the outcome of Y?".
-For multiple-choice questions, provide exactly one correct answer and three highly plausible but tricky distractors.
-
-You must reply with strictly valid JSON matching this schema exactly, and nothing else.
+Create concise study material from the lecture transcript context.
+Return strictly valid JSON with this schema:
 {{
     "flashcards": [
-        {{"question": "Deep conceptual question 1?", "answer": "Detailed, thorough answer explaining the concept."}},
-        {{"question": "Deep conceptual question 2?", "answer": "Detailed, thorough answer explaining the concept."}}
+        {{"question": "...", "answer": "..."}}
     ],
     "quiz_questions": [
         {{
-            "question": "Challenging multiple choice question 1?",
-            "options": ["Plausible Distractor A", "Plausible Distractor B", "Plausible Distractor C", "Correct Answer"],
-            "correct_answer": "Correct Answer"
+            "question": "...",
+            "options": ["...", "...", "...", "..."],
+            "correct_answer": "..."
         }}
     ]
 }}
 
 Requirements:
-- Generate exactly 3 flashcards from this specific chunk.
-- Generate exactly 2 multiple-choice quiz questions from this specific chunk.
+- Generate 5 flashcards.
+- Generate 3 multiple-choice quiz questions.
+- Keep each item aligned with the lecture concepts.
+- Do not include markdown or explanation outside JSON.
 
-Summary of overall lecture:
+Summary:
 {summary}
 
-Concepts to focus on:
+Concepts:
 {concepts}
 
-Transcript Chunk to analyze:
+Transcript excerpt:
 {transcript_excerpt}
 """.strip()
         )
 
+        transcript_excerpt = transcript_text[:8000]
         chain = prompt | self.llm | StrOutputParser()
 
-        words = transcript_text.split()
-        chunk_size = max(len(words) // 3, 1)
-        chunks = [
-            " ".join(words[i : i + chunk_size])
-            for i in range(0, len(words), chunk_size)
-        ][:3]
+        try:
+            raw = str(
+                chain.invoke(
+                    {
+                        "summary": summary_text,
+                        "concepts": ", ".join(concepts),
+                        "transcript_excerpt": transcript_excerpt,
+                    }
+                )
+            ).strip()
+            payload = _extract_json_object(raw)
+        except Exception as exc:  # pragma: no cover - model invocation failure
+            logger.warning("Study material generation failed: %s", exc)
+            payload = {}
 
-        all_flashcards: list[dict[str, str]] = []
-        all_quiz_questions: list[dict[str, Any]] = []
-        last_error = ""
+        flashcards: list[dict[str, str]] = []
+        for item in payload.get("flashcards", []):
+            question = str(item.get("question", "")).strip()
+            answer = str(item.get("answer", "")).strip()
+            if question and answer:
+                flashcards.append({"question": question, "answer": answer})
 
-        for chunk in chunks:
-            try:
-                raw = str(
-                    chain.invoke(
-                        {
-                            "summary": summary_text,
-                            "concepts": ", ".join(concepts),
-                            "transcript_excerpt": chunk[:5000],
-                        }
-                    )
-                ).strip()
-                payload = _extract_json_object(raw)
-                
-                for item in payload.get("flashcards", []):
-                    question = str(item.get("question", "")).strip()
-                    answer = str(item.get("answer", "")).strip()
-                    if question and answer:
-                        all_flashcards.append({"question": question, "answer": answer})
+        quiz_questions: list[dict[str, Any]] = []
+        for item in payload.get("quiz_questions", []):
+            question = str(item.get("question", "")).strip()
+            options = [
+                str(option).strip()
+                for option in item.get("options", [])
+                if str(option).strip()
+            ]
+            correct = str(item.get("correct_answer", "")).strip()
 
-                for item in payload.get("quiz_questions", []):
-                    question = str(item.get("question", "")).strip()
-                    options = [str(opt).strip() for opt in item.get("options", []) if str(opt).strip()]
-                    correct = str(item.get("correct_answer", "")).strip()
-
-                    if not question or not correct:
-                        continue
-                    if correct not in options:
-                        options = options[:3] + [correct]
-                    if len(options) >= 2:
-                        all_quiz_questions.append({
-                            "question": question,
-                            "options": options[:4],
-                            "correct_answer": correct,
-                        })
-
-            except Exception as exc:
-                logger.warning("Chunk generation failed: %s", exc)
-                last_error = str(exc)
+            if not question or not correct:
+                continue
+            if correct not in options:
+                options = options[:3] + [correct]
+            if len(options) < 2:
                 continue
 
-        if not all_flashcards and not all_quiz_questions:
-            return [{"question": "LLM Parsing Failed", "answer": f"Generation Error: {last_error}"}], []
-
-        # Deduplicate flashcards by exact question match
-        unique_flashcards = []
-        seen_q = set()
-        for f in all_flashcards:
-            q = f["question"].lower()
-            if q not in seen_q:
-                seen_q.add(q)
-                unique_flashcards.append(f)
-
-        return unique_flashcards[:10], all_quiz_questions[:5]
-
-    def _generate_study_materials_groq(
-        self,
-        transcript_text: str,
-        summary_text: str,
-        concepts: list[str],
-    ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-        """Map-Reduce flashcard generation powered by Groq Llama-3.3-70B."""
-        system_prompt = (
-            "You are a rigorous university professor creating exam-level study materials. "
-            "You must respond with ONLY valid JSON — no markdown, no explanation, no preamble. "
-            "Generate deeply conceptual questions that require synthesis, not mere recall. "
-            "Never ask 'What is X?' Instead ask 'Why does X outperform Y in scenario Z?' "
-            "Distractors for multiple choice must be highly plausible and wrong for a subtle reason."
-        )
-
-        schema = (
-            '{\n'
-            '  "flashcards": [\n'
-            '    {"question": "Deep conceptual question?", "answer": "Thorough explanation that builds understanding."},\n'
-            '    {"question": "Another synthesis question?", "answer": "Thorough answer."}\n'
-            '  ],\n'
-            '  "quiz_questions": [\n'
-            '    {\n'
-            '      "question": "Challenging MCQ?",\n'
-            '      "options": ["Plausible wrong A", "Plausible wrong B", "Plausible wrong C", "Correct Answer"],\n'
-            '      "correct_answer": "Correct Answer"\n'
-            '    }\n'
-            '  ]\n'
-            '}'
-        )
-
-        words = transcript_text.split()
-        chunk_size = max(len(words) // 3, 300)
-        chunks = [" ".join(words[i: i + chunk_size]) for i in range(0, len(words), chunk_size)][:3]
-
-        all_flashcards: list[dict[str, str]] = []
-        all_quiz_questions: list[dict[str, Any]] = []
-        last_error = ""
-
-        for i, chunk in enumerate(chunks, 1):
-            user_message = (
-                f"Overall lecture summary:\n{summary_text}\n\n"
-                f"Key concepts: {', '.join(concepts)}\n\n"
-                f"Transcript chunk {i} of {len(chunks)}:\n{chunk[:6000]}\n\n"
-                f"Generate exactly 3 flashcards and 2 quiz questions from this chunk only.\n"
-                f"Reply with ONLY this JSON structure:\n{schema}"
+            quiz_questions.append(
+                {
+                    "question": question,
+                    "options": options[:4],
+                    "correct_answer": correct,
+                }
             )
-            try:
-                raw = self._call_groq(system_prompt, user_message, temperature=0.4, max_tokens=2048)
-                payload = _extract_json_object(raw)
 
-                for item in payload.get("flashcards", []):
-                    q = str(item.get("question", "")).strip()
-                    a = str(item.get("answer", "")).strip()
-                    if q and a:
-                        all_flashcards.append({"question": q, "answer": a})
+        if len(flashcards) < 3 or len(quiz_questions) < 2:
+            return self._fallback_study_materials(transcript_text, summary_text, concepts)
 
-                for item in payload.get("quiz_questions", []):
-                    q = str(item.get("question", "")).strip()
-                    opts = [str(o).strip() for o in item.get("options", []) if str(o).strip()]
-                    correct = str(item.get("correct_answer", "")).strip()
-                    if not q or not correct:
-                        continue
-                    if correct not in opts:
-                        opts = opts[:3] + [correct]
-                    if len(opts) >= 2:
-                        all_quiz_questions.append({
-                            "question": q,
-                            "options": opts[:4],
-                            "correct_answer": correct,
-                        })
-
-            except Exception as exc:
-                logger.warning("Groq chunk %d generation failed: %s", i, exc)
-                last_error = str(exc)
-
-        if not all_flashcards and not all_quiz_questions:
-            return [{"question": "Groq Generation Error", "answer": last_error}], []
-
-        # Deduplicate
-        unique_fc: list[dict[str, str]] = []
-        seen_q: set[str] = set()
-        for f in all_flashcards:
-            key = f["question"].lower()
-            if key not in seen_q:
-                seen_q.add(key)
-                unique_fc.append(f)
-
-        return unique_fc[:10], all_quiz_questions[:5]
-
+        return flashcards[:5], quiz_questions[:3]
 
     def _segments_to_documents(
         self,
@@ -1120,13 +931,7 @@ Transcript Chunk to analyze:
             "restrictfilenames": True,
             "quiet": True,
             "no_warnings": True,
-            "extractor_args": {"youtube": ["player_client=android,web"]},
         }
-        
-        cookie_path = Path("/app/cookies.txt")
-        if cookie_path.exists():
-            ydl_opts["cookiefile"] = str(cookie_path)
-            
         if ffmpeg_path:
             ydl_opts["ffmpeg_location"] = ffmpeg_path
 
@@ -1278,14 +1083,6 @@ Transcript Chunk to analyze:
             metadata_json=metadata,
         )
 
-        self.tracker.log_pipeline_session(
-            session_id=session_id,
-            transcription_meta={"duration_seconds": duration_seconds, "segment_count": len(segments), "language": metadata.get("language")},
-            summarization_meta={"summary_length": len(summary_text)},
-            indexing_meta={"vector_store_chunks": len(segments)},
-            model_params={"generation_model": self._active_generation_model_name}
-        )
-
         return {
             "session_id": session_id,
             "title": session_title,
@@ -1369,25 +1166,7 @@ Answer:
 """.strip()
         )
 
-        if self._has_groq():
-            # Use Groq for significantly better contextual QA
-            try:
-                raw_answer = self._call_groq(
-                    system_prompt=(
-                        "You are a knowledgeable lecture assistant. "
-                        "Answer the student's question using ONLY the provided transcript context. "
-                        "Give a clear, concise, accurate answer in 3-5 sentences. "
-                        "If the answer is not in the context, say 'I cannot find this in the lecture transcript.'"
-                    ),
-                    user_message=f"Transcript Context:\n{context}\n\nQuestion: {question}",
-                    temperature=0.2,
-                    max_tokens=512,
-                )
-                answer = _clean_generated_answer(raw_answer) or "I cannot find this in the lecture transcript."
-            except Exception as exc:
-                logger.warning("Groq QA failed, falling back: %s", exc)
-                answer = self._fallback_answer_from_docs(question, docs)
-        elif self._disable_neural_generation or self.llm is None:
+        if self._disable_neural_generation or self.llm is None:
             answer = self._fallback_answer_from_docs(question, docs)
         else:
             chain = prompt | self.llm | StrOutputParser()
