@@ -16,7 +16,7 @@ import streamlit as st
 # Page config — must be first Streamlit call
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="V2AI · Lecture Intelligence Studio",
+    page_title="V2AI · Lecture Intelligence Studio v2",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
