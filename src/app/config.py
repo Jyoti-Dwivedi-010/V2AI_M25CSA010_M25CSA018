@@ -86,7 +86,7 @@ def load_settings() -> Settings:
     request_log_path = _resolve_project_path(
         project_root, os.getenv("REQUEST_LOG_PATH", "artifacts/monitoring/request_logs.jsonl")
     )
-    generation_model_default = os.getenv("HF_GENERATION_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
+    generation_model_default = os.getenv("HF_GENERATION_MODEL", "Qwen/Qwen2.5-7B-Instruct")
     generation_model_cpu = os.getenv(
         "HF_GENERATION_MODEL_CPU",
         "Qwen/Qwen2.5-0.5B-Instruct",
