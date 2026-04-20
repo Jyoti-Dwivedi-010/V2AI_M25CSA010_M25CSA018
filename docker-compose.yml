@@ -131,6 +131,7 @@ services:
       USE_GPU: "false"
       WANDB_API_KEY: ${WANDB_API_KEY:-}
       WANDB_PROJECT: v2ai-rag
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -144,7 +145,13 @@ services:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
+        ]
       interval: 20s
       timeout: 10s
       retries: 8
@@ -157,14 +164,20 @@ services:
     container_name: v2ai-ui
     restart: unless-stopped
     environment:
-      API_BASE_URL: http://api:8000
+      API_BASE_URL: ${API_BASE_URL:-http://api-gpu:8000}
     ports:
       - "8501:8501"
     depends_on:
       api:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"
+        ]
       interval: 20s
       timeout: 10s
       retries: 4

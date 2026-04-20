@@ -15,10 +15,11 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
+from langchain_huggingface import HuggingFaceEmbeddings
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 
 from app.config import Settings, load_settings
+from app.services.safe_hf_pipeline import SafeHuggingFacePipeline
 
 
 class RAGService:
@@ -98,7 +99,7 @@ class RAGService:
         vector_store.save_local(str(vector_path))
         return vector_store
 
-    def _build_generation_llm(self) -> HuggingFacePipeline:
+    def _build_generation_llm(self) -> SafeHuggingFacePipeline:
         model_name = self.settings.hf_generation_model
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
@@ -112,7 +113,7 @@ class RAGService:
             temperature=self.settings.generation_temperature,
             do_sample=True,
         )
-        return HuggingFacePipeline(pipeline=generator)
+        return SafeHuggingFacePipeline(pipeline=generator)
 
     def _build_chain(self):
         prompt = PromptTemplate.from_template(

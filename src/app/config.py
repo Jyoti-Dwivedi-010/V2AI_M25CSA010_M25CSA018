@@ -59,6 +59,8 @@ class Settings:
     concepts_top_k: int
     generation_max_tokens: int
     generation_temperature: float
+    hf_token: str
+    groq_api_key: str
 
 
 @lru_cache(maxsize=1)
@@ -140,4 +142,6 @@ def load_settings() -> Settings:
         concepts_top_k=int(os.getenv("CONCEPTS_TOP_K", "12")),
         generation_max_tokens=int(os.getenv("GENERATION_MAX_TOKENS", "256")),
         generation_temperature=float(os.getenv("GENERATION_TEMPERATURE", "0.2")),
+        hf_token=os.getenv("HF_TOKEN", ""),
+        groq_api_key=os.getenv("GROQ_API_KEY", ""),
     )
