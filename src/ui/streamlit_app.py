@@ -468,7 +468,7 @@ st.markdown(
     timestamped citations.
   </p>
   <div class='hero-badge'>
-    <span>🧠</span> Whisper + LangChain + HuggingFace + FAISS + MLflow
+    <span>🧠</span> Whisper + LangChain + HuggingFace + FAISS + MLflow &nbsp;·&nbsp; ✅ CI/CD verified
   </div>
 </div>
 """,
