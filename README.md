@@ -118,11 +118,7 @@ GPU profile:
 docker compose --profile gpu up --build
 ```
 
-## 6. Accuracy Claim Substantiation
-
-Do not present 90-95% or 99.95% claims without measured evidence.
-
-Use:
+use:
 
 ```powershell
 $env:PYTHONPATH="src"
@@ -142,9 +138,6 @@ Also track metrics trend in MLflow and attach run IDs in your report.
 - CD workflow: build/push images to GHCR and deploy to server via Docker Compose
 
 ## 8. Server Run (your GPU server)
-
-Target:
-- `m25csa0xx@172.25.1.123`
 
 Detailed setup:
 - `docs/SERVER_SETUP.md`
