@@ -60,7 +60,7 @@ This document maps each block in your proposal diagram to implementation files.
 - NLP extraction: BART summary + Sentence-BERT concept ranking
 - LangChain context flow: retrieval + prompt + generation parser chain
 - Containerization: Dockerfiles and docker-compose stack
-- Deployment: Kubernetes manifests under `k8s/`
+- Deployment: Docker Compose services and server deployment workflow
 - Database strategy: PostgreSQL session schema (`lecture_sessions`, `query_logs`)
 - File strategy: MinIO object store integration
 

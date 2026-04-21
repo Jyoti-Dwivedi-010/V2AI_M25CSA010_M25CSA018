@@ -16,7 +16,7 @@ It summarizes architecture, flow, components, state, and pending work in plain l
 - NLP/LLM stack: Whisper, Hugging Face generation and summarization, Sentence Transformers, LangChain components, FAISS
 - Data stores: PostgreSQL or SQLite, MinIO object store, local artifacts
 - Ops stack: MLflow, optional WandB, Prometheus metrics endpoint, drift checker
-- Infra stack: Docker, Docker Compose, Kubernetes, GitHub Actions CI/CD
+- Infra stack: Docker, Docker Compose, GitHub Actions CI/CD
 
 ## Runtime Request Flows
 
@@ -118,7 +118,6 @@ It summarizes architecture, flow, components, state, and pending work in plain l
 - src/ui: Streamlit frontend
 - scripts: Utility and orchestration scripts
 - docker: Container images for API/UI/MLflow
-- k8s: Kubernetes manifests for app and backing services
 - data: Knowledge corpus and evaluation set
 - artifacts: Runtime outputs and generated files
 - docs: Architecture, alignment, SOP, setup documentation
@@ -134,14 +133,14 @@ It summarizes architecture, flow, components, state, and pending work in plain l
 ## Known Constraints
 - Heavy model loading on low-memory Windows environments can still be expensive.
 - Fallback paths prevent full pipeline crashes but can reduce answer richness.
-- Session index persistence in Kubernetes should be reviewed for pod restart continuity.
-- CD deploy job requires configured Kubernetes secret and image owner setup.
+- Session index persistence should be reviewed for long-running server restarts.
+- CD deploy job requires configured server SSH secrets and image owner setup.
 
 ## Remaining Work for Production-Grade Completion
 1. Run and archive formal evaluation reports.
 2. Register and stage model versions in MLflow registry.
-3. Finalize cluster deployment variables and secrets.
-4. Strengthen persistence strategy for API-side vector artifacts in Kubernetes.
+3. Finalize server deployment variables and secrets.
+4. Strengthen persistence strategy for API-side vector artifacts.
 5. Extend automated tests beyond API path coverage.
 
 ## Suggested File Reading Order for Another LLM
@@ -155,6 +154,5 @@ It summarizes architecture, flow, components, state, and pending work in plain l
 8. src/app/experiments/evaluate_rag.py
 9. src/app/experiments/register_model.py
 10. docker-compose.yml
-11. k8s/api-deployment.yaml
-12. .github/workflows/ci.yml
-13. .github/workflows/cd.yml
+11. .github/workflows/ci.yml
+12. .github/workflows/cd.yml

@@ -43,7 +43,9 @@ git push origin v0.1.0
 ```
 
 ## 6. Required GitHub secrets for CD
-- `KUBE_CONFIG_DATA` (base64 encoded kubeconfig)
+- `SERVER_HOST`
+- `SERVER_USER`
+- `SERVER_PASSWORD`
 
 ## 7. Optional protected branch rules
 - Require PR review before merge

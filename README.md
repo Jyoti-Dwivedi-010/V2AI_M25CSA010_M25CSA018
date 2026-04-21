@@ -13,7 +13,7 @@ This repository implements your proposal pipeline end-to-end:
 - Artifact storage/versioning in MinIO
 - Experiment tracking with MLflow (optional WandB)
 - Monitoring with logs + Prometheus + drift checks
-- Containerized deployment with Docker and Kubernetes
+- Containerized deployment with Docker Compose
 - GitHub CI/CD workflows
 
 Proposal mapping: see `docs/PROPOSAL_ALIGNMENT.md`.
@@ -30,7 +30,7 @@ Proposal mapping: see `docs/PROPOSAL_ALIGNMENT.md`.
 - Object store: MinIO
 - Tracking: MLflow (+ optional WandB)
 - Containerization: Docker
-- Orchestration: Kubernetes
+- Orchestration: Docker Compose
 
 ## 2. Project File Map (important)
 
@@ -46,8 +46,6 @@ Proposal mapping: see `docs/PROPOSAL_ALIGNMENT.md`.
   - Attractive UI with clickable timestamp jumps.
 - `docker-compose.yml`
   - Local multi-service stack.
-- `k8s/*.yaml`
-  - Kubernetes manifests.
 - `.github/workflows/*.yml`
   - CI/CD pipelines.
 
@@ -120,36 +118,7 @@ GPU profile:
 docker compose --profile gpu up --build
 ```
 
-## 6. Kubernetes Deploy
-
-Before deploying, replace `YOUR_GITHUB_USERNAME` in:
-- `k8s/api-deployment.yaml`
-- `k8s/api-deployment-gpu.yaml`
-- `k8s/ui-deployment.yaml`
-
-Deploy sequence:
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/postgres-pvc.yaml
-kubectl apply -f k8s/postgres-deployment.yaml
-kubectl apply -f k8s/minio-pvc.yaml
-kubectl apply -f k8s/minio-deployment.yaml
-kubectl apply -f k8s/mlflow-pvc.yaml
-kubectl apply -f k8s/mlflow-deployment.yaml
-kubectl apply -f k8s/api-deployment.yaml
-kubectl apply -f k8s/ui-deployment.yaml
-kubectl apply -f k8s/hpa-api.yaml
-```
-
-Optional GPU API:
-
-```bash
-kubectl apply -f k8s/api-deployment-gpu.yaml
-```
-
-## 7. Accuracy Claim Substantiation
+## 6. Accuracy Claim Substantiation
 
 Do not present 90-95% or 99.95% claims without measured evidence.
 
@@ -165,17 +134,14 @@ Evidence artifact:
 
 Also track metrics trend in MLflow and attach run IDs in your report.
 
-## 8. GitHub Versioning + CI/CD
+## 7. GitHub Versioning + CI/CD
 
 - Branch model: `main`, `develop`, `feature/*`, `hotfix/*`
 - Semantic tags: `vMAJOR.MINOR.PATCH`
 - CI workflow: lint + tests
-- CD workflow: build/push images to GHCR and deploy to Kubernetes
+- CD workflow: build/push images to GHCR and deploy to server via Docker Compose
 
-CD secret required:
-- `KUBE_CONFIG_DATA` (base64 kubeconfig)
-
-## 9. Server Run (your GPU server)
+## 8. Server Run (your GPU server)
 
 Target:
 - `m25csa0xx@172.25.1.123`
@@ -183,14 +149,14 @@ Target:
 Detailed setup:
 - `docs/SERVER_SETUP.md`
 
-## 10. Notes
+## 9. Notes
 
 - Whisper requires ffmpeg. API Docker images already install ffmpeg.
 - For large videos, transcription can take several minutes.
 - Session-specific vector indexes are automatically created during upload.
 - Video fingerprint (`sha256`) is stored in session metadata for artifact traceability.
 
-## 11. Automated Cleanup
+## 10. Automated Cleanup
 
 Run cleanup for old sessions and local artifacts:
 

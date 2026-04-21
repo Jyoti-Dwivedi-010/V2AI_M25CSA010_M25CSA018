@@ -42,5 +42,3 @@ pipeline:
 deployment:
   local:
     command: docker compose up --build
-  kubernetes:
-    command: kubectl apply -f k8s/

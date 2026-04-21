@@ -37,7 +37,7 @@ V2AI ingests lecture videos (local uploads or YouTube URLs), transcribes them us
 
 ## 5. Remaining Tasks (From the Project Proposal)
 To fully satisfy the academic project proposal, the following tasks are outstanding and should be your primary focus:
-1. **Public Cloud Deployment**: The proposal mandates "deployment on Google Cloud" or "HuggingFace Spaces". The current deployment is on a local university server. You need to prepare Terraform scripts, Kubernetes manifests, or a HuggingFace Space `Dockerfile` to migrate this setup to a public cloud.
+1. **Public Cloud Deployment**: The proposal mandates "deployment on Google Cloud" or "HuggingFace Spaces". The current deployment is on a local university server. You need to prepare Terraform scripts or a HuggingFace Space `Dockerfile` to migrate this setup to a public cloud.
 2. **PostgreSQL Migration**: The proposal explicitly mentions a "postgresql schema". While `docker-compose.yml` spins up a PostgreSQL container, the FastAPI application is currently connecting to a local `sqlite:///` database defined in the `.env` file. You need to ensure SQLAlchemy connects to the Postgres container, handle any required schema migrations, and verify data persistence.
 
 ## 6. How to Assist the User

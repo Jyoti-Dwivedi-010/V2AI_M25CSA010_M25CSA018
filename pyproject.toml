@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mlops-llmops-rag-project"
 version = "0.1.0"
-description = "End-to-end MLOps + LLMOps pipeline with Hugging Face, LangChain, MLflow, Docker and Kubernetes"
+description = "End-to-end MLOps + LLMOps pipeline with Hugging Face, LangChain, MLflow, and Docker Compose"
 readme = "README.md"
 requires-python = ">=3.11"
 

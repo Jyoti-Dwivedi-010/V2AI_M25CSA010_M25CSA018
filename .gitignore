@@ -39,9 +39,6 @@ mlruns/
 mlflow.db
 *.db
 
-# Rendered k8s manifests
-k8s/*.rendered.yaml
-
 # OS files
 Thumbs.db
 .DS_Store

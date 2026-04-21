@@ -91,7 +91,6 @@ flowchart LR
     CI[CI Workflow\n.github/workflows/ci.yml]
     CD[CD Workflow\n.github/workflows/cd.yml]
     GHCR[GitHub Container Registry]
-    K8S[Kubernetes Cluster]
     DOCKER[Local Docker Compose]
 
     DEV --> GIT
@@ -99,7 +98,7 @@ flowchart LR
     CI -->|lint and tests| GIT
     GIT --> CD
     CD -->|build and push images| GHCR
-    CD -->|kubectl apply| K8S
+    CD -->|deploy via SSH + docker compose| DOCKER
 
     DEV --> DOCKER
     DOCKER --> API_LOCAL[API Service]

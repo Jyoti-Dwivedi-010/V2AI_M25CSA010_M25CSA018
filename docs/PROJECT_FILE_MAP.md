@@ -34,10 +34,7 @@
 - `docker/Dockerfile.ui`: UI container.
 - `docker/Dockerfile.mlflow`: MLflow container.
 - `docker-compose.yml`: Local orchestrated stack.
-- `k8s/*.yaml`: Kubernetes manifests.
-- `k8s/postgres-*.yaml`: PostgreSQL persistence and service resources.
-- `k8s/minio-*.yaml`: MinIO persistence and service resources.
 
 ## Automation
 - `.github/workflows/ci.yml`: Lint + tests.
-- `.github/workflows/cd.yml`: Build, push, and deploy pipeline.
+- `.github/workflows/cd.yml`: Build, push, and server deploy pipeline.
